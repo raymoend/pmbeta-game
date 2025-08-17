@@ -74,9 +74,13 @@ WSGI_APPLICATION = 'pmbeta.wsgi.application'
 ASGI_APPLICATION = 'pmbeta.asgi.application'
 
 # Database
-if 'DATABASE_URL' in os.environ:
+if 'DATABASE_URL' in os.environ and os.environ.get('DATABASE_URL'):
     DATABASES = {
-        'default': dj_database_url.parse(os.environ.get('DATABASE_URL'))
+        'default': dj_database_url.parse(
+            os.environ.get('DATABASE_URL'),
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
     }
 else:
     DATABASES = {
