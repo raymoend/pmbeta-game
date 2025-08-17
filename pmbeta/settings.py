@@ -176,3 +176,61 @@ GAME_SETTINGS = {
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/game/'
 LOGOUT_REDIRECT_URL = '/'
+
+# Railway Production Optimizations
+if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
+    # Force DEBUG to False in production
+    DEBUG = False
+    
+    # Enhanced security for production
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    
+    # Static files optimizations
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    WHITENOISE_USE_FINDERS = True
+    
+    # Redis configuration for WebSocket channels (if available)
+    REDIS_URL = os.environ.get('REDIS_URL')
+    if REDIS_URL:
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                'CONFIG': {
+                    "hosts": [REDIS_URL],
+                    "capacity": 1500,
+                    "expiry": 10,
+                },
+            },
+        }
+        
+        # Use Redis for caching if available
+        CACHES = {
+            'default': {
+                'BACKEND': 'django_redis.cache.RedisCache',
+                'LOCATION': REDIS_URL,
+                'OPTIONS': {
+                    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                }
+            }
+        }
+        
+        # Use Redis sessions
+        SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+        SESSION_CACHE_ALIAS = 'default'
+    else:
+        # Fallback configurations when Redis not available
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels.layers.InMemoryChannelLayer',
+            },
+        }
+        SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+else:
+    # Development: Enable channels for WebSocket functionality
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
