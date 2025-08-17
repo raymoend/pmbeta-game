@@ -25,6 +25,58 @@ from .models import (
 
 
 # ===============================
+# DEBUG VIEWS (TEMPORARY)
+# ===============================
+
+def debug_500_error(request):
+    """Debug endpoint to diagnose 500 errors in production"""
+    import traceback
+    import sys
+    from django.conf import settings
+    from django.urls import reverse
+    import os
+    
+    debug_info = {
+        'status': 'debug_active',
+        'django_version': sys.version,
+        'settings_module': os.environ.get('DJANGO_SETTINGS_MODULE'),
+        'debug_mode': settings.DEBUG,
+        'allowed_hosts': settings.ALLOWED_HOSTS,
+    }
+    
+    # Test database connection
+    try:
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            debug_info['database'] = 'Connected'
+    except Exception as e:
+        debug_info['database'] = f'Error: {str(e)}'
+    
+    # Test URL reversal
+    url_tests = {}
+    test_urls = ['index', 'register', 'login', 'character_creation']
+    for url_name in test_urls:
+        try:
+            resolved = reverse(url_name)
+            url_tests[url_name] = f'OK: {resolved}'
+        except Exception as e:
+            url_tests[url_name] = f'ERROR: {str(e)}'
+    
+    debug_info['url_tests'] = url_tests
+    
+    # Test template rendering
+    try:
+        from django.template.loader import get_template
+        template = get_template('main/index.html')
+        debug_info['template'] = 'Template loads OK'
+    except Exception as e:
+        debug_info['template'] = f'Template error: {str(e)}'
+    
+    return JsonResponse(debug_info)
+
+
+# ===============================
 # MAIN GAME VIEWS
 # ===============================
 

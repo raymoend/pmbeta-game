@@ -4,6 +4,7 @@ Optimized for deployment with Redis, PostgreSQL, and environment variables
 """
 
 import os
+import sys
 import dj_database_url
 from .settings import *
 
@@ -128,6 +129,20 @@ LOGGING = {
 }
 
 # Game settings - use environment variables for sensitive data
+# Ensure GAME_SETTINGS exists (should inherit from base settings but let's be explicit)
+try:
+    GAME_SETTINGS
+except NameError:
+    GAME_SETTINGS = {
+        'MOVEMENT_RANGE': 800,
+        'CHUNK_GRANULARITY': 100,
+        'DEFAULT_START_LAT': 41.0646633,
+        'DEFAULT_START_LON': -80.6391736,
+        'ZOOM_LEVEL': 15,
+        'MAPBOX_ACCESS_TOKEN': 'pk.eyJ1IjoiamFsbGk5NiIsImEiOiJjbWU3eW9tZnUwOWJuMnJvcmJrN252OGloIn0.0OSOw3J1cDB45AIRS_mEbA',
+        'MAPBOX_STYLE': 'mapbox://styles/mapbox/dark-v11',
+    }
+
 if os.environ.get('MAPBOX_ACCESS_TOKEN'):
     GAME_SETTINGS['MAPBOX_ACCESS_TOKEN'] = os.environ.get('MAPBOX_ACCESS_TOKEN')
 

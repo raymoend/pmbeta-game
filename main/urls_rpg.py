@@ -9,6 +9,9 @@ from django.urls import reverse_lazy
 from . import views_rpg
 
 urlpatterns = [
+    # Debug endpoint (temporary)
+    path('debug/500/', views_rpg.debug_500_error, name='debug_500'),
+    
     # Main game views
     path('', views_rpg.index, name='index'),
     path('character-creation/', views_rpg.character_creation, name='character_creation'),
