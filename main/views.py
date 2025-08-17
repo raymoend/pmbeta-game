@@ -8,6 +8,7 @@ from django.contrib.auth import login
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib import messages
 from django.http import JsonResponse
+from django.utils import timezone
 
 
 def index(request):
@@ -69,3 +70,50 @@ def api_game_stats(request):
             'message': 'Using new RPG system'
         }
     })
+
+
+def health_check(request):
+    """Health check endpoint for Railway deployment debugging"""
+    import sys
+    import os
+    from django.conf import settings
+    from django.db import connections
+    
+    try:
+        # Basic health check info
+        health_info = {
+            'status': 'healthy',
+            'timestamp': timezone.now().isoformat(),
+            'django_version': __import__('django').VERSION,
+            'python_version': sys.version,
+            'settings_module': os.environ.get('DJANGO_SETTINGS_MODULE', 'Not set'),
+            'debug': settings.DEBUG,
+            'allowed_hosts': settings.ALLOWED_HOSTS,
+        }
+        
+        # Test database connection
+        try:
+            db_conn = connections['default']
+            db_conn.ensure_connection()
+            health_info['database'] = 'connected'
+            health_info['database_engine'] = settings.DATABASES['default']['ENGINE']
+        except Exception as e:
+            health_info['database'] = f'error: {str(e)}'
+            health_info['status'] = 'unhealthy'
+        
+        # Check environment variables
+        health_info['env_vars'] = {
+            'SECRET_KEY': 'SET' if os.environ.get('SECRET_KEY') else 'NOT SET',
+            'DATABASE_URL': 'SET' if os.environ.get('DATABASE_URL') else 'NOT SET',
+            'RAILWAY_ENVIRONMENT': os.environ.get('RAILWAY_ENVIRONMENT', 'NOT SET'),
+            'PORT': os.environ.get('PORT', 'NOT SET'),
+        }
+        
+        return JsonResponse(health_info)
+        
+    except Exception as e:
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e),
+            'error_type': type(e).__name__,
+        }, status=500)

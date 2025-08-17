@@ -20,6 +20,9 @@ urlpatterns = [
     # API endpoints that exist
     path('api/stats/', views.api_game_stats, name='api_game_stats'),
     
+    # Health check for debugging
+    path('health/', views.health_check, name='health_check'),
+    
     # Crafting interface
     path('crafting/', views.crafting, name='crafting'),
     

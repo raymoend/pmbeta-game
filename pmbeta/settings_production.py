@@ -53,18 +53,27 @@ else:
     }
 
 # Redis configuration for WebSocket channels
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+# Temporarily disabled for Railway deployment debugging
+REDIS_URL = os.environ.get('REDIS_URL')
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [REDIS_URL],
-            "capacity": 1500,
-            "expiry": 10,
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [REDIS_URL],
+                "capacity": 1500,
+                "expiry": 10,
+            },
         },
-    },
-}
+    }
+else:
+    # Fallback to in-memory channel layer if Redis not available
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 # Security settings
 SECURE_BROWSER_XSS_FILTER = True
@@ -170,8 +179,13 @@ if REDIS_URL:
     }
 
 # Session configuration
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
+if REDIS_URL:
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+    SESSION_CACHE_ALIAS = 'default'
+else:
+    # Use database sessions if Redis not available
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+    
 SESSION_COOKIE_AGE = 86400  # 24 hours
 
 # Email configuration (optional - for password reset, etc.)
