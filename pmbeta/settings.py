@@ -13,9 +13,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Security settings
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'pmbeta-dev-key-change-in-production')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
-# Temporary: Allow all hosts to bypass Railway healthcheck issues
-# TODO: Restrict this once Railway deployment is stable
-ALLOWED_HOSTS = ['*']
+# Allow Railway domains and custom domain
+ALLOWED_HOSTS = [
+    'tsrbeta.com',
+    'www.tsrbeta.com', 
+    '.railway.app',
+    'zq2gmvyl.up.railway.app',
+    'healthcheck.railway.app',
+    'localhost',
+    '127.0.0.1'
+]
 
 # Application definition
 INSTALLED_APPS = [
