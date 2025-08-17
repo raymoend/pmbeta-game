@@ -2,8 +2,8 @@
 WebSocket URL routing for PMBeta RPG game
 """
 from django.urls import re_path
-from . import consumers
+from . import consumers_rpg
 
 websocket_urlpatterns = [
-    re_path(r'ws/game/$', consumers.RPGGameConsumer.as_asgi()),
+    re_path(r'ws/game/$', consumers_rpg.RPGGameConsumer.as_asgi()),
 ]
