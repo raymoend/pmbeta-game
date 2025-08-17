@@ -14,8 +14,6 @@ urlpatterns = [
     path('character-creation/', views_rpg.character_creation, name='character_creation'),
     path('game/', views_rpg.rpg_game, name='rpg_game'),
     
-    # Debug endpoint for Railway deployment
-    path('debug/urls/', views_rpg.debug_urls, name='debug_urls'),
     
     # Authentication (keeping existing auth system)
     path('login/', auth_views.LoginView.as_view(template_name='registration/login.html'), name='login'),
