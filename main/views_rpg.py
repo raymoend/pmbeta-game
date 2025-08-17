@@ -25,6 +25,48 @@ from .models import (
 
 
 # ===============================
+# DEBUG AND UTILITY VIEWS
+# ===============================
+
+def debug_urls(request):
+    """Debug endpoint to check URL configuration in production"""
+    from django.urls import get_resolver, reverse
+    from django.conf import settings
+    import os
+    
+    debug_info = {
+        'django_settings_module': os.environ.get('DJANGO_SETTINGS_MODULE'),
+        'root_urlconf': settings.ROOT_URLCONF,
+        'debug_mode': settings.DEBUG,
+        'railway_environment': os.environ.get('RAILWAY_ENVIRONMENT'),
+    }
+    
+    # Try to reverse important URLs
+    url_tests = {}
+    urls_to_test = ['register', 'login', 'logout', 'index', 'rpg_game']
+    
+    for url_name in urls_to_test:
+        try:
+            resolved_url = reverse(url_name)
+            url_tests[url_name] = f"✓ {resolved_url}"
+        except Exception as e:
+            url_tests[url_name] = f"✗ ERROR: {str(e)}"
+    
+    # Get URL patterns
+    resolver = get_resolver()
+    patterns = []
+    for pattern in resolver.url_patterns:
+        patterns.append(str(pattern))
+    
+    debug_info.update({
+        'url_tests': url_tests,
+        'url_patterns': patterns
+    })
+    
+    return JsonResponse(debug_info)
+
+
+# ===============================
 # MAIN GAME VIEWS
 # ===============================
 

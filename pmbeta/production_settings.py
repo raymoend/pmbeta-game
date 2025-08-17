@@ -46,9 +46,11 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = False  # Railway handles this
 USE_TZ = True
 
-# CORS settings for production
-CORS_ALLOW_ALL_ORIGINS = False
+# CORS settings for production  
+# Temporarily allow all origins for Railway deployment
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
+    "https://*.railway.app",
     "https://your-game-domain.com",  # Replace with your actual domain
 ]
 
@@ -69,6 +71,9 @@ else:
             'BACKEND': 'channels.layers.InMemoryChannelLayer',
         },
     }
+
+# Ensure we're using the correct URL configuration  
+ROOT_URLCONF = 'pmbeta.urls'
 
 # Update Mapbox token from environment variable if available
 if os.environ.get('MAPBOX_ACCESS_TOKEN'):

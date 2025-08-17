@@ -10,6 +10,9 @@ from .settings import *
 # Override development settings for production
 DEBUG = False
 
+# Ensure correct URL configuration is used
+ROOT_URLCONF = 'pmbeta.urls'
+
 # Security settings
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if not SECRET_KEY:
@@ -87,17 +90,20 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# CORS settings (adjust for your frontend domain)
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # React dev server
-    "https://yourdomain.com", # Your production domain
-]
-
-# If you have a specific frontend domain, replace the above with:
+# CORS settings for production
 if os.environ.get('FRONTEND_URL'):
     CORS_ALLOWED_ORIGINS = [os.environ.get('FRONTEND_URL')]
+elif os.environ.get('RAILWAY_ENVIRONMENT'):
+    # For Railway deployment, allow all origins temporarily for debugging
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True
 else:
-    CORS_ALLOW_ALL_ORIGINS = False  # More secure than allowing all
+    # Default production CORS settings
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    CORS_ALLOW_ALL_ORIGINS = False
 
 # Logging configuration
 LOGGING = {
