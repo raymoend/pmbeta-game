@@ -111,8 +111,13 @@ def character_creation(request):
             return render(request, 'main/character_creation.html')
         
         # Get starting location (use user's IP geolocation in production)
-        start_lat = settings.GAME_SETTINGS.get('DEFAULT_START_LAT', 41.0646633)
-        start_lon = settings.GAME_SETTINGS.get('DEFAULT_START_LON', -80.6391736)
+        try:
+            start_lat = settings.GAME_SETTINGS.get('DEFAULT_START_LAT', 41.0646633)
+            start_lon = settings.GAME_SETTINGS.get('DEFAULT_START_LON', -80.6391736)
+        except AttributeError:
+            # Fallback if GAME_SETTINGS is not available
+            start_lat = 41.0646633  # Cleveland area
+            start_lon = -80.6391736
         
         # Create character
         character = Character.objects.create(
@@ -158,9 +163,20 @@ def rpg_game(request):
     character.is_online = True
     character.save(update_fields=['is_online', 'last_activity'])
     
+    # Get game settings safely
+    try:
+        game_settings = settings.GAME_SETTINGS
+    except AttributeError:
+        # Fallback game settings
+        game_settings = {
+            'MAPBOX_ACCESS_TOKEN': 'pk.eyJ1IjoiamFsbGk5NiIsImEiOiJjbWU3eW9tZnUwOWJuMnJvcmJrN252OGloIn0.0OSOw3J1cDB45AIRS_mEbA',
+            'MAPBOX_STYLE': 'mapbox://styles/mapbox/dark-v11',
+            'ZOOM_LEVEL': 15
+        }
+    
     context = {
         'character': character,
-        'game_settings': settings.GAME_SETTINGS,
+        'game_settings': game_settings,
     }
     
     return render(request, 'main/rpg_game.html', context)
