@@ -17,7 +17,9 @@ ROOT_URLCONF = 'pmbeta.urls'
 # Security settings
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if not SECRET_KEY:
-    raise ValueError("SECRET_KEY environment variable is required")
+    import secrets
+    SECRET_KEY = secrets.token_urlsafe(50)
+    print(f"WARNING: Using generated SECRET_KEY. Set SECRET_KEY environment variable for production.")
 
 ALLOWED_HOSTS = [
     os.environ.get('DOMAIN_NAME', ''),
@@ -81,11 +83,20 @@ SECURE_HSTS_PRELOAD = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Static files directories
+STATICFILES_DIRS = [
+    BASE_DIR / 'main' / 'static',
+]
+
 # Use WhiteNoise for static file serving
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 # WhiteNoise static file compression
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Additional WhiteNoise settings
+WHITENOISE_USE_FINDERS = True
+WHITENOISE_AUTOREFRESH = DEBUG
 
 # Media files (if using file uploads)
 MEDIA_URL = '/media/'
