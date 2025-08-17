@@ -5,6 +5,7 @@ The main RPG system URLs are in urls_rpg.py
 from django.urls import path
 from django.contrib.auth import views as auth_views
 from . import views
+from . import views_resources
 
 urlpatterns = [
     # Main pages
@@ -18,4 +19,16 @@ urlpatterns = [
     
     # API endpoints that exist
     path('api/stats/', views.api_game_stats, name='api_game_stats'),
+    
+    # Crafting interface
+    path('crafting/', views.crafting, name='crafting'),
+    
+    # Resource Collection API
+    path('api/resources/nearby/', views_resources.nearby_resources, name='api_nearby_resources'),
+    path('api/resources/harvest/', views_resources.harvest_resource, name='api_harvest_resource'),
+    path('api/resources/info/<uuid:resource_id>/', views_resources.resource_info, name='api_resource_info'),
+    path('api/inventory/', views_resources.character_inventory, name='api_character_inventory'),
+    path('api/inventory/use/', views_resources.use_item, name='api_use_item'),
+    path('api/inventory/berries/', views_resources.use_berries, name='api_use_berries'),
+    path('api/harvest-history/', views_resources.harvest_history, name='api_harvest_history'),
 ]

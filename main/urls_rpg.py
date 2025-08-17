@@ -44,4 +44,7 @@ urlpatterns = [
     
     # Trading API endpoints
     path('api/rpg/trade/create/', views_rpg.api_trade_create, name='api_trade_create'),
+    
+    # Character movement endpoint
+    path('api/rpg/character/move/', views_rpg.api_character_move, name='api_character_move'),
 ]

@@ -22,41 +22,16 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.close(code=4001)
                 return
             
-            # Get character
-            self.character = await self.get_character(user)
-            if not self.character:
-                await self.close(code=4002)
-                return
-            
-            # Join character's personal group
-            self.character_group = f"character_{self.character.id}"
-            await self.channel_layer.group_add(
-                self.character_group,
-                self.channel_name
-            )
-            
-            # Join location-based group (for nearby players)
-            self.location_group = f"location_{int(self.character.lat * 1000)}_{int(self.character.lon * 1000)}"
-            await self.channel_layer.group_add(
-                self.location_group,
-                self.channel_name
-            )
-            
-            # Join global chat group
-            await self.channel_layer.group_add(
-                "global_chat",
-                self.channel_name
-            )
-            
+            # For now, just accept the connection without database operations
             await self.accept()
             
-            # Update character to online
-            await self.update_character_online_status(self.character.id, True)
+            # Send a simple test message
+            await self.send(text_data=json.dumps({
+                'type': 'connection_test',
+                'message': f'WebSocket connected for user {user.username}'
+            }))
             
-            # Send initial character data
-            await self.send_character_status()
-            
-            logger.info(f"WebSocket connected for character: {self.character.name}")
+            logger.info(f"WebSocket connected for user: {user.username}")
             
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")

@@ -762,6 +762,72 @@ def api_trade_create(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
+@login_required
+@require_http_methods(["POST"])
+def api_character_move(request):
+    """Handle character movement via tap-to-move"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        data = json.loads(request.body)
+        target_lat = float(data.get('lat', 0))
+        target_lon = float(data.get('lon', 0))
+        
+        # Validate coordinates
+        if not (-90 <= target_lat <= 90) or not (-180 <= target_lon <= 180):
+            return JsonResponse({'success': False, 'error': 'Invalid coordinates'}, status=400)
+        
+        # Calculate distance using Haversine formula
+        import math
+        
+        def calculate_distance(lat1, lon1, lat2, lon2):
+            R = 6371000  # Earth's radius in meters
+            lat1_rad = math.radians(lat1)
+            lat2_rad = math.radians(lat2)
+            delta_lat = math.radians(lat2 - lat1)
+            delta_lon = math.radians(lon2 - lon1)
+            
+            a = (math.sin(delta_lat / 2) * math.sin(delta_lat / 2) +
+                 math.cos(lat1_rad) * math.cos(lat2_rad) *
+                 math.sin(delta_lon / 2) * math.sin(delta_lon / 2))
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            return R * c
+        
+        # Calculate movement distance for logging
+        distance = calculate_distance(
+            character.lat, character.lon,
+            target_lat, target_lon
+        )
+        
+        # Don't allow movement during combat
+        if character.in_combat:
+            return JsonResponse({
+                'success': False,
+                'error': 'Cannot move during combat!'
+            }, status=400)
+        
+        # Update character position
+        character.lat = target_lat
+        character.lon = target_lon
+        character.save(update_fields=['lat', 'lon'])
+        
+        return JsonResponse({
+            'success': True,
+            'lat': character.lat,
+            'lon': character.lon,
+            'distance': distance
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    except (ValueError, TypeError):
+        return JsonResponse({'success': False, 'error': 'Invalid coordinate values'}, status=400)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
 # ===============================
 # UTILITY FUNCTIONS
 # ===============================

@@ -23,7 +23,8 @@ ALLOWED_HOSTS = [
     '.railway.app',
     'healthcheck.railway.app',
     'localhost',
-    '127.0.0.1'
+    '127.0.0.1',
+    'testserver'  # For Django testing
 ]
 
 # Application definition
@@ -56,7 +57,7 @@ ROOT_URLCONF = 'pmbeta.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
+        'DIRS': [],  # Remove global templates directory to prioritize app templates
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -85,22 +86,22 @@ else:
         }
     }
 
-# WebSocket/Channels configuration
-if 'REDIS_URL' in os.environ:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {
-                'hosts': [os.environ.get('REDIS_URL')],
-            },
-        },
-    }
-else:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        },
-    }
+# WebSocket/Channels configuration - disabled for debugging
+# if 'REDIS_URL' in os.environ:
+#     CHANNEL_LAYERS = {
+#         'default': {
+#             'BACKEND': 'channels_redis.core.RedisChannelLayer',
+#             'CONFIG': {
+#                 'hosts': [os.environ.get('REDIS_URL')],
+#             },
+#         },
+#     }
+# else:
+#     CHANNEL_LAYERS = {
+#         'default': {
+#             'BACKEND': 'channels.layers.InMemoryChannelLayer',
+#         },
+#     }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

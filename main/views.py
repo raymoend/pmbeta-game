@@ -43,6 +43,22 @@ def game(request):
     return redirect('rpg_game')
 
 
+@login_required
+def crafting(request):
+    """Crafting workshop interface"""
+    # Ensure user has a character
+    try:
+        character = request.user.character
+    except:
+        messages.error(request, 'You need to create a character first!')
+        return redirect('index')
+    
+    return render(request, 'crafting.html', {
+        'character': character,
+        'title': 'Crafting Workshop'
+    })
+
+
 def api_game_stats(request):
     """Public API endpoint for game statistics"""
     return JsonResponse({

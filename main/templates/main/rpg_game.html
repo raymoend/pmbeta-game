@@ -454,6 +454,132 @@
             100% { transform: rotate(360deg); }
         }
         
+        /* Enhanced NPC Popup Styles */
+        .npc-popup {
+            font-family: 'Segoe UI', sans-serif;
+            color: #333;
+            min-width: 250px;
+        }
+        
+        .npc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .npc-name {
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .npc-level {
+            background: #3498db;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .npc-stats {
+            margin: 10px 0;
+        }
+        
+        .npc-hp {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        
+        .hp-label {
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #555;
+        }
+        
+        .hp-bar-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .hp-bar-bg {
+            flex: 1;
+            height: 12px;
+            background: #ecf0f1;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #bdc3c7;
+        }
+        
+        .hp-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e74c3c, #c0392b);
+            border-radius: 5px;
+            transition: width 0.3s ease;
+        }
+        
+        .hp-text {
+            font-size: 0.8rem;
+            font-weight: bold;
+            color: #555;
+            min-width: 50px;
+        }
+        
+        .npc-distance {
+            font-size: 0.8rem;
+            color: #7f8c8d;
+            text-align: center;
+        }
+        
+        .npc-actions {
+            margin-top: 12px;
+            text-align: center;
+        }
+        
+        .fight-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            font-size: 0.9rem;
+        }
+        
+        .fight-btn:hover {
+            background: linear-gradient(135deg, #c0392b, #a93226);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        .fight-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .fight-btn.disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .fight-btn.disabled:hover {
+            background: #95a5a6;
+            transform: none;
+            box-shadow: none;
+        }
+        
         /* Responsive */
         @media (max-width: 768px) {
             .side-panel {
@@ -549,6 +675,7 @@
                     <button class="tab-button active" onclick="showTab('inventory')">Inventory</button>
                     <button class="tab-button" onclick="showTab('character')">Character</button>
                     <button class="tab-button" onclick="showTab('nearby')">Players</button>
+                    <button class="tab-button" onclick="showTab('crafting')">Crafting</button>
                 </div>
                 
                 <div class="panel-content">
@@ -606,6 +733,21 @@
                         <h3>Nearby Players</h3>
                         <div class="nearby-list" id="nearbyPlayersList">
                             <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+                    
+                    <!-- Crafting Tab -->
+                    <div id="crafting-tab" class="tab-panel">
+                        <h3>🔨 Crafting</h3>
+                        <div style="margin-bottom: 15px; text-align: center;">
+                            <a href="/crafting/" target="_blank" class="btn" style="background: linear-gradient(45deg, #f39c12, #e67e22); color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; display: inline-block;">
+                                Open Crafting Workshop
+                            </a>
+                        </div>
+                        <div id="craftingQuickPanel" style="max-height: 400px; overflow-y: auto;">
+                            <div style="text-align: center; color: #95a5a6; padding: 20px;">
+                                Loading crafting info...
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -684,7 +826,13 @@
                 zoom: 15, // Fixed zoom level
                 pitch: 0,
                 bearing: 0,
-                interactive: false // Disable all interactions (no panning, zooming, rotation)
+                interactive: true, // Enable interactions for tap-to-move
+                scrollZoom: false, // Disable scroll wheel zoom
+                boxZoom: false, // Disable box zoom
+                dragRotate: false, // Disable rotation
+                touchZoomRotate: false, // Disable touch zoom/rotate
+                doubleClickZoom: false, // Disable double-click zoom
+                keyboard: false // Disable keyboard navigation
             });
 
             gameState.map.on('load', function() {
@@ -702,6 +850,9 @@
                 
                 // Start game loop
                 startGameLoop();
+                
+                // Add tap-to-move functionality
+                initializeTapToMove();
             });
         }
 
@@ -795,27 +946,54 @@
             
             // Add monster markers to map
             monsters.forEach(monster => {
-                const color = monster.is_aggressive ? '#8b0000' : '#ff6b6b';
+                const color = getMonsterColor(monster.level);
+                const isInRange = monster.distance <= 50; // 50m range for combat
+                
+                // Create enhanced popup HTML with Fight button
+                const popupHTML = `
+                    <div class="npc-popup">
+                        <div class="npc-header">
+                            <strong class="npc-name">${monster.name}</strong>
+                            <span class="npc-level">Level ${monster.level}</span>
+                        </div>
+                        <div class="npc-stats">
+                            <div class="npc-hp">
+                                <div class="hp-label">HP:</div>
+                                <div class="hp-bar-container">
+                                    <div class="hp-bar-bg">
+                                        <div class="hp-bar-fill" style="width: ${(monster.current_hp / monster.max_hp) * 100}%"></div>
+                                    </div>
+                                    <div class="hp-text">${monster.current_hp}/${monster.max_hp}</div>
+                                </div>
+                            </div>
+                            <div class="npc-distance">${Math.round(monster.distance)}m away</div>
+                        </div>
+                        <div class="npc-actions">
+                            ${isInRange ? 
+                                `<button class="fight-btn" onclick="startPvECombat('${monster.id}')">⚔️ Fight</button>` : 
+                                `<button class="fight-btn disabled" disabled>Too Far Away</button>`
+                            }
+                        </div>
+                    </div>
+                `;
                 
                 const marker = new mapboxgl.Marker({ color: color, scale: 0.9 })
                     .setLngLat([monster.lon, monster.lat])
-                    .setPopup(new mapboxgl.Popup().setHTML(`
-                        <strong>${monster.name}</strong><br>
-                        Level ${monster.level}<br>
-                        HP: ${monster.current_hp}/${monster.max_hp}<br>
-                        ${Math.round(monster.distance)}m away
-                    `))
+                    .setPopup(new mapboxgl.Popup({ 
+                        closeOnClick: true,
+                        closeButton: true,
+                        maxWidth: '280px'
+                    }).setHTML(popupHTML))
                     .addTo(gameState.map);
-                
-                // Add click event for combat
-                marker.getElement().addEventListener('click', () => {
-                    if (monster.distance <= 50) { // 50m range for combat
-                        startPvECombat(monster.id);
-                    } else {
-                        showMessage('Too far away to attack!', 'error');
-                    }
-                });
             });
+        }
+        
+        function getMonsterColor(level) {
+            // Color code monsters by level difficulty
+            if (level <= 2) return '#32cd32';      // Green for easy (levels 1-2)
+            if (level <= 5) return '#ffd700';      // Yellow for moderate (levels 3-5)
+            if (level <= 8) return '#ff8c00';      // Orange for hard (levels 6-8)
+            return '#dc143c';                       // Red for very hard (level 9+)
         }
 
         function loadInventory() {
@@ -1095,6 +1273,179 @@
                 mobileToggle.style.display = 'none';
                 document.getElementById('sidePanel').classList.remove('open');
             }
+        }
+
+        // Tap-to-move system
+        let isMoving = false;
+        let playerMarker = null;
+        
+        function initializeTapToMove() {
+            // Add click event listener to the map
+            gameState.map.on('click', function(e) {
+                // Don't move if in combat
+                if (gameState.activeCombat) {
+                    showMessage('Cannot move during combat!', 'error');
+                    return;
+                }
+                
+                // Don't move if already moving
+                if (isMoving) {
+                    showMessage('Already moving...', 'info');
+                    return;
+                }
+                
+                // Get the clicked coordinates
+                const clickLngLat = e.lngLat;
+                const targetLat = clickLngLat.lat;
+                const targetLon = clickLngLat.lng;
+                
+                // Perform movement with smooth sliding
+                moveCharacterTo(targetLat, targetLon);
+            });
+        }
+        
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            // Calculate distance in meters using Haversine formula
+            const R = 6371000; // Earth's radius in meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // Distance in meters
+        }
+        
+        function moveCharacterTo(targetLat, targetLon) {
+            // Set movement flag
+            isMoving = true;
+            
+            // Calculate distance for animation duration
+            const distance = calculateDistance(
+                gameState.character.lat, 
+                gameState.character.lon, 
+                targetLat, 
+                targetLon
+            );
+            
+            // Calculate animation duration based on distance (min 1s, max 5s)
+            const baseDuration = Math.min(Math.max(distance * 10, 1000), 5000);
+            
+            // Show movement indicator
+            showMessage(`Moving ${Math.round(distance)}m...`, 'info');
+            
+            // Store original position for smooth interpolation
+            const startLat = gameState.character.lat;
+            const startLon = gameState.character.lon;
+            
+            // Animate the marker position smoothly
+            animateMarkerMovement(startLat, startLon, targetLat, targetLon, baseDuration);
+            
+            // Center map on new location with smooth transition
+            gameState.map.easeTo({
+                center: [targetLon, targetLat],
+                zoom: {{ game_settings.ZOOM_LEVEL }},
+                duration: baseDuration
+            });
+            
+            // Update character position in game state after animation completes
+            setTimeout(() => {
+                gameState.character.lat = targetLat;
+                gameState.character.lon = targetLon;
+                
+                // Send movement update to server via WebSocket
+                if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
+                    gameState.websocket.send(JSON.stringify({
+                        type: 'player_movement',
+                        lat: targetLat,
+                        lon: targetLon
+                    }));
+                }
+                
+                // Update character position on server via API
+                updateCharacterPosition(targetLat, targetLon);
+                
+                // Reset movement flag
+                isMoving = false;
+                showMessage('Arrived!', 'success');
+                
+                // Refresh nearby data after movement
+                loadGameData();
+            }, baseDuration);
+        }
+        
+        function animateMarkerMovement(startLat, startLon, targetLat, targetLon, duration) {
+            const startTime = performance.now();
+            const latDiff = targetLat - startLat;
+            const lonDiff = targetLon - startLon;
+            
+            function updateMarkerPosition(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Use easing function for smooth animation
+                const easedProgress = easeInOutCubic(progress);
+                
+                // Calculate current position
+                const currentLat = startLat + (latDiff * easedProgress);
+                const currentLon = startLon + (lonDiff * easedProgress);
+                
+                // Update marker position
+                if (playerMarker) {
+                    playerMarker.setLngLat([currentLon, currentLat]);
+                }
+                
+                // Continue animation if not complete
+                if (progress < 1) {
+                    requestAnimationFrame(updateMarkerPosition);
+                }
+            }
+            
+            // Start the animation
+            requestAnimationFrame(updateMarkerPosition);
+        }
+        
+        function easeInOutCubic(t) {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+        
+        function updateCharacterPosition(lat, lon) {
+            // Update character position on server
+            fetch('/api/rpg/character/move/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({
+                    lat: lat,
+                    lon: lon
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('Position updated on server');
+                } else {
+                    console.error('Failed to update position:', data.error);
+                    showMessage('Failed to update position on server', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error updating position:', error);
+            });
+        }
+        
+        // Update addPlayerMarker to store reference
+        function addPlayerMarker() {
+            // Add player location marker
+            playerMarker = new mapboxgl.Marker({
+                color: '#3498db',
+                scale: 1.2
+            })
+            .setLngLat([gameState.character.lon, gameState.character.lat])
+            .addTo(gameState.map);
         }
 
         // Initialize everything when page loads
