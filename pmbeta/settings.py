@@ -15,10 +15,8 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'pmbeta-dev-key-change-in-produ
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 # Allow Railway domains and custom domain
 ALLOWED_HOSTS = [
-    'tsrbeta.com',
-    'www.tsrbeta.com', 
+    'web-production-2d762.up.railway.app',
     '.railway.app',
-    'zq2gmvyl.up.railway.app',
     'healthcheck.railway.app',
     'localhost',
     '127.0.0.1'
@@ -134,6 +132,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings for development
 CORS_ALLOW_ALL_ORIGINS = True
+
+# CSRF settings for Railway deployment
+CSRF_TRUSTED_ORIGINS = [
+    'https://web-production-2d762.up.railway.app',
+    'https://*.railway.app',
+]
+
+# Additional CSRF settings for Railway
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = not DEBUG
 
 # Game-specific settings
 GAME_SETTINGS = {
