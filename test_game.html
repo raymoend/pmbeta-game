@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMBeta Game Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 20px;
+        }
+        .status {
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .success { border-left: 4px solid #4CAF50; }
+        .error { border-left: 4px solid #F44336; }
+        .warning { border-left: 4px solid #FF9800; }
+    </style>
+</head>
+<body>
+    <h1>🏴 PMBeta Game Test</h1>
+    
+    <div id="test-results">
+        <div class="status">
+            <h3>Testing Game Components...</h3>
+            <div id="test-output"></div>
+        </div>
+    </div>
+
+    <script>
+        function addResult(message, type = 'success') {
+            const output = document.getElementById('test-output');
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.innerHTML = message;
+            output.appendChild(div);
+        }
+
+        // Test basic JavaScript
+        addResult('✓ JavaScript is working');
+
+        // Test if we can access basic browser APIs
+        try {
+            if (navigator.geolocation) {
+                addResult('✓ Geolocation API available');
+            } else {
+                addResult('⚠ Geolocation API not available', 'warning');
+            }
+        } catch (e) {
+            addResult('✗ Geolocation test failed: ' + e.message, 'error');
+        }
+
+        // Test if we can make HTTP requests
+        try {
+            fetch('/api/stats/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        addResult('✓ API endpoints accessible');
+                    } else {
+                        addResult('⚠ API returned error: ' + data.error, 'warning');
+                    }
+                })
+                .catch(error => {
+                    addResult('⚠ API test failed (normal if not logged in): ' + error.message, 'warning');
+                });
+        } catch (e) {
+            addResult('✗ Fetch API test failed: ' + e.message, 'error');
+        }
+
+        // Test Mapbox GL availability
+        const mapboxScript = document.createElement('script');
+        mapboxScript.src = 'https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js';
+        mapboxScript.onload = function() {
+            addResult('✓ Mapbox GL JS loaded successfully');
+            if (typeof mapboxgl !== 'undefined') {
+                addResult('✓ Mapbox GL object available');
+            }
+        };
+        mapboxScript.onerror = function() {
+            addResult('✗ Failed to load Mapbox GL JS', 'error');
+        };
+        document.head.appendChild(mapboxScript);
+
+        addResult('<strong>Instructions:</strong><br>1. Visit <a href="http://127.0.0.1:8000/login/" style="color: #4CAF50;">http://127.0.0.1:8000/login/</a><br>2. Login with username: <code>IronRay</code><br>3. After login, you\'ll be redirected to the game<br>4. Press \'F\' key to open flag controls');
+    </script>
+</body>
+</html>

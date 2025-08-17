@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMBeta - Parallel Kingdom Clone</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #ff6b35;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .nav-links a {
+            color: #e0e0e0;
+            text-decoration: none;
+            padding: 10px 20px;
+            border: 2px solid transparent;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            border-color: #ff6b35;
+            background: rgba(255, 107, 53, 0.1);
+        }
+
+        .hero {
+            text-align: center;
+            padding: 100px 0;
+        }
+
+        .hero h1 {
+            font-size: 4em;
+            margin-bottom: 20px;
+            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.8);
+            color: #ffffff;
+        }
+
+        .hero p {
+            font-size: 1.3em;
+            margin-bottom: 40px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 30px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #ff6b35, #f7931e);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #f7931e, #ff6b35);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 53, 0.4);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: #e0e0e0;
+            border: 2px solid #ff6b35;
+        }
+
+        .btn-secondary:hover {
+            background: #ff6b35;
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .features {
+            padding: 100px 0;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .feature:hover {
+            transform: translateY(-10px);
+            border-color: rgba(255, 107, 53, 0.5);
+        }
+
+        .feature-icon {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #ff6b35;
+        }
+
+        .feature h3 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            color: #ffffff;
+        }
+
+        .feature p {
+            line-height: 1.6;
+            color: #cccccc;
+        }
+
+        .footer {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 40px 0;
+            text-align: center;
+            border-top: 1px solid rgba(255, 107, 53, 0.2);
+        }
+
+        .footer p {
+            margin: 0;
+            color: #999999;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5em;
+            }
+
+            .hero p {
+                font-size: 1.1em;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .nav-links {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .navbar {
+                flex-direction: column;
+                gap: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <nav class="navbar">
+                <div class="logo">PMBeta</div>
+                <div class="nav-links">
+                    <a href="{% url 'pk_login' %}">Login</a>
+                    <a href="{% url 'pk_register' %}">Register</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1>Welcome to PMBeta</h1>
+                <p>
+                    Experience the ultimate location-based strategy game inspired by Parallel Kingdom.
+                    Build territories, harvest resources, engage in real-time combat, and dominate the world
+                    using your actual GPS location. Form alliances, trade with players, and create your empire
+                    in the real world.
+                </p>
+                <div class="cta-buttons">
+                    <a href="{% url 'pk_register' %}" class="btn btn-primary">Start Playing Now</a>
+                    <a href="#features" class="btn btn-secondary">Learn More</a>
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <div class="container">
+                <h2 style="text-align: center; font-size: 2.5em; margin-bottom: 20px; color: #ffffff;">Game Features</h2>
+                <p style="text-align: center; font-size: 1.2em; margin-bottom: 60px; color: #cccccc;">
+                    Discover what makes PMBeta the most immersive location-based strategy experience
+                </p>
+
+                <div class="features-grid">
+                    <div class="feature">
+                        <div class="feature-icon">🗺️</div>
+                        <h3>Real-World GPS Gameplay</h3>
+                        <p>Use your actual location to explore, build, and conquer. The entire world is your game board in this unique GPS-based strategy experience.</p>
+                    </div>
+
+                    <div class="feature">
+                        <div class="feature-icon">🏰</div>
+                        <h3>Territory Control</h3>
+                        <p>Place flags and build territories in real locations. Expand your influence, collect resources, and defend your domains from other players.</p>
+                    </div>
+
+                    <div class="feature">
+                        <div class="feature-icon">⚔️</div>
+                        <h3>Real-Time Combat</h3>
+                        <p>Engage in strategic turn-based combat with other players. Build your might, upgrade equipment, and prove your dominance on the battlefield.</p>
+                    </div>
+
+                    <div class="feature">
+                        <div class="feature-icon">🌲</div>
+                        <h3>Resource Harvesting</h3>
+                        <p>Gather lumber, stone, ore, and other resources from nodes scattered around the world. Use them to build and upgrade your empire.</p>
+                    </div>
+
+                    <div class="feature">
+                        <div class="feature-icon">🤝</div>
+                        <h3>Alliance System</h3>
+                        <p>Join or create alliances with other players. Coordinate attacks, share resources, and work together to control vast regions of the world.</p>
+                    </div>
+
+                    <div class="feature">
+                        <div class="feature-icon">💰</div>
+                        <h3>Trading Economy</h3>
+                        <p>Trade resources, equipment, and gold with other players. Build a thriving economy and become the wealthiest ruler in your region.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2025 PMBeta. Experience the evolution of location-based gaming.</p>
+        </div>
+    </footer>
+</body>
+</html>

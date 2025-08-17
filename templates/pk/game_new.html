@@ -1,0 +1,503 @@
+{% extends 'pk/base.html' %}
+
+{% block title %}Parallel Kingdom - Game{% endblock %}
+
+{% block content %}
+<div class="pk-card p-3 mb-3">
+    <div class="d-flex justify-content-between align-items-center">
+        <h4><i class="fas fa-gamepad"></i> Game Dashboard</h4>
+        <div>
+            <button id="refresh-data" class="btn pk-btn btn-sm me-2">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button id="spawn-resources" class="btn btn-outline-warning btn-sm">
+                <i class="fas fa-seedling"></i> Spawn Resources (Admin)
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Player Dashboard -->
+<div class="game-view-container mb-3">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="pk-card p-3 mb-3">
+                <h5><i class="fas fa-user-circle text-warning"></i> You</h5>
+                <div class="text-center">
+                    <i class="fas fa-user-circle text-warning" style="font-size: 60px;"></i>
+                    <div class="mt-2">
+                        <strong id="player-name">Loading...</strong>
+                        <div class="small text-muted">Level <span id="player-level">1</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="pk-card p-3 mb-3">
+                <h6><i class="fas fa-map-marker-alt"></i> Location</h6>
+                <div id="location-info" class="small">Loading...</div>
+                <hr>
+                <h6><i class="fas fa-eye"></i> Nearby</h6>
+                <div id="nearby-info" class="small">Loading...</div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="pk-card p-3 mb-3">
+                <h6><i class="fas fa-bolt"></i> Quick Actions</h6>
+                <button id="place-territory-btn" class="btn pk-btn btn-sm w-100 mb-2">
+                    <i class="fas fa-flag"></i> Place Territory
+                </button>
+                <button id="center-on-player" class="btn pk-btn btn-sm w-100">
+                    <i class="fas fa-crosshairs"></i> Show My Info
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Panels -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="pk-card p-3">
+            <h5><i class="fas fa-hammer"></i> Actions</h5>
+            <div id="action-feedback" class="alert pk-alert d-none mb-3"></div>
+            <div class="btn-group w-100 mb-2" role="group">
+                <button id="harvest-btn" class="btn pk-btn">
+                    <i class="fas fa-tree"></i> Harvest
+                </button>
+                <button id="attack-btn" class="btn pk-btn">
+                    <i class="fas fa-sword"></i> Attack
+                </button>
+                <button id="trade-btn" class="btn pk-btn">
+                    <i class="fas fa-handshake"></i> Trade
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="pk-card p-3">
+            <h5><i class="fas fa-list"></i> Recent Activity</h5>
+            <div id="activity-log" style="max-height: 150px; overflow-y: auto;">
+                <small class="text-muted">No recent activity</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Place Territory Modal -->
+<div class="modal fade" id="place-territory-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header pk-header">
+                <h5 class="modal-title"><i class="fas fa-flag"></i> Place Territory</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="territory-form">
+                    <div class="mb-3">
+                        <label class="form-label">Territory Name</label>
+                        <input type="text" class="form-control bg-dark text-light" id="territory-name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Territory Type</label>
+                        <select class="form-select bg-dark text-light" id="territory-type">
+                            <option value="flag">Flag (10 lumber, 5 stone, 50 gold)</option>
+                            <option value="outpost">Outpost (25 lumber, 15 stone, 200 gold)</option>
+                            <option value="city">City (100 lumber, 50 stone, 1000 gold)</option>
+                        </select>
+                    </div>
+                    <div class="text-muted small">
+                        <p><strong>Location:</strong> <span id="territory-coords">Your current location</span></p>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="territory-form" class="btn pk-btn">Place Territory</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Attack Modal -->
+<div class="modal fade" id="attack-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header pk-header">
+                <h5 class="modal-title"><i class="fas fa-sword"></i> Attack Player</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="attack-target-info"></div>
+                <div class="alert pk-alert">
+                    <strong>Warning:</strong> Attacking other players costs 3 energy and may result in resource loss if you lose!
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="confirm-attack" class="btn btn-danger">Attack!</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Game state
+let gameState = {
+    player: null,
+    mapData: null,
+    selectedTarget: null,
+    territoryCoords: null
+};
+
+// Initialize game
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🎮 Initializing PMBeta Game...');
+    loadPlayerStatus();
+    setupEventHandlers();
+    startGameLoop();
+});
+
+function setupEventHandlers() {
+    // Quick action buttons
+    document.getElementById('refresh-data').addEventListener('click', function() {
+        loadPlayerStatus();
+        loadMapData();
+        showMessage('Game data refreshed!', 'success');
+    });
+    document.getElementById('place-territory-btn').addEventListener('click', showPlaceTerritoryModal);
+    document.getElementById('center-on-player').addEventListener('click', centerOnPlayer);
+    
+    // Action buttons
+    document.getElementById('harvest-btn').addEventListener('click', function() { 
+        showMessage('Click on a nearby resource to harvest it', 'info'); 
+    });
+    document.getElementById('attack-btn').addEventListener('click', function() { 
+        showMessage('Select a nearby player to attack', 'info'); 
+    });
+    
+    // Territory form
+    document.getElementById('territory-form').addEventListener('submit', placeTerritorySubmit);
+    
+    // Attack confirmation
+    document.getElementById('confirm-attack').addEventListener('click', confirmAttack);
+    
+    // Admin spawn resources
+    document.getElementById('spawn-resources').addEventListener('click', spawnResources);
+}
+
+function startGameLoop() {
+    // Update player status every 30 seconds
+    setInterval(loadPlayerStatus, 30000);
+    
+    // Update map data every 60 seconds
+    setInterval(loadMapData, 60000);
+    
+    // Initial loads
+    loadMapData();
+}
+
+// API Functions
+async function apiCall(endpoint, method = 'GET', data = null) {
+    const options = {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        }
+    };
+    
+    if (data) {
+        options.body = JSON.stringify(data);
+    }
+    
+    try {
+        const response = await fetch(endpoint, options);
+        return await response.json();
+    } catch (error) {
+        console.error('API call failed:', error);
+        showMessage('Network error occurred', 'error');
+        return { success: false, error: 'Network error' };
+    }
+}
+
+async function loadPlayerStatus() {
+    const result = await apiCall('/api/player/status/');
+    if (result.success) {
+        gameState.player = result.player;
+        updatePlayerUI();
+        console.log('✅ Player status loaded:', result.player.username);
+    } else {
+        console.error('❌ Failed to load player status:', result.error);
+    }
+}
+
+async function loadMapData() {
+    if (!gameState.player) return;
+    
+    const result = await apiCall(`/api/map/data/?radius=0.01`);
+    if (result.success) {
+        gameState.mapData = result.map_data;
+        updateGameInfo();
+        console.log('✅ Map data loaded:', result.map_data);
+    } else {
+        console.error('❌ Failed to load map data:', result.error);
+    }
+}
+
+function updatePlayerUI() {
+    if (!gameState.player) return;
+    
+    const p = gameState.player;
+    
+    // Update resource displays in sidebar
+    document.getElementById('energy-text').textContent = `${p.energy}/100`;
+    document.getElementById('energy-fill').style.width = `${p.energy}%`;
+    document.getElementById('food-text').textContent = `${p.food}/500`;
+    document.getElementById('food-fill').style.width = `${(p.food / 500) * 100}%`;
+    
+    document.getElementById('gold-amount').textContent = p.gold.toLocaleString();
+    document.getElementById('lumber-amount').textContent = p.lumber.toLocaleString();
+    document.getElementById('stone-amount').textContent = p.stone.toLocaleString();
+    document.getElementById('ore-amount').textContent = p.ore.toLocaleString();
+    document.getElementById('might-amount').textContent = p.might;
+    document.getElementById('defense-amount').textContent = p.defense;
+    
+    // Update main game area
+    document.getElementById('player-name').textContent = p.username;
+    document.getElementById('player-level').textContent = p.level;
+    document.getElementById('location-info').innerHTML = `
+        📍 ${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}<br>
+        <small class="text-muted">Lat: ${p.lat.toFixed(5)}, Lon: ${p.lon.toFixed(5)}</small>
+    `;
+}
+
+function updateGameInfo() {
+    if (!gameState.mapData) return;
+    
+    // Update nearby info
+    let nearbyText = '';
+    if (gameState.mapData.resources && gameState.mapData.resources.length > 0) {
+        nearbyText += `🌳 ${gameState.mapData.resources.length} resources<br>`;
+    }
+    if (gameState.mapData.territories && gameState.mapData.territories.length > 0) {
+        nearbyText += `🚩 ${gameState.mapData.territories.length} territories<br>`;
+    }
+    if (gameState.mapData.players && gameState.mapData.players.length > 0) {
+        nearbyText += `👥 ${gameState.mapData.players.length} players`;
+    }
+    
+    if (!nearbyText) {
+        nearbyText = '<span class="text-muted">Empty area</span>';
+    }
+    
+    document.getElementById('nearby-info').innerHTML = nearbyText;
+    
+    // Update nearby players list in sidebar
+    updateNearbyPlayersList();
+}
+
+function updateNearbyPlayersList() {
+    const container = document.getElementById('nearby-players');
+    
+    if (!gameState.mapData || !gameState.mapData.players.length) {
+        container.innerHTML = '<small class="text-muted">No players nearby</small>';
+        return;
+    }
+    
+    let html = '';
+    gameState.mapData.players.slice(0, 5).forEach(player => {
+        html += `
+            <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-dark rounded">
+                <div>
+                    <strong>${player.username}</strong><br>
+                    <small class="text-muted">L${player.level} • ${player.distance}m</small>
+                </div>
+                <button onclick="attackPlayer('${player.id}', '${player.username}')" class="btn btn-sm btn-outline-danger">
+                    <i class="fas fa-sword"></i>
+                </button>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+// Action Functions
+function centerOnPlayer() {
+    if (gameState.player) {
+        showMessage(`📍 You are at ${gameState.player.lat.toFixed(5)}, ${gameState.player.lon.toFixed(5)}`, 'info');
+        logActivity('Viewed current location');
+    }
+}
+
+function showPlaceTerritoryModal() {
+    if (gameState.player) {
+        gameState.territoryCoords = { lat: gameState.player.lat, lng: gameState.player.lon };
+        document.getElementById('territory-coords').textContent = `${gameState.player.lat.toFixed(5)}, ${gameState.player.lon.toFixed(5)}`;
+    }
+    
+    const modal = new bootstrap.Modal(document.getElementById('place-territory-modal'));
+    modal.show();
+    
+    showMessage('Territory will be placed at your current location', 'info');
+}
+
+async function placeTerritorySubmit(e) {
+    e.preventDefault();
+    
+    if (!gameState.territoryCoords) {
+        showMessage('Location not available', 'error');
+        return;
+    }
+    
+    const name = document.getElementById('territory-name').value;
+    const type = document.getElementById('territory-type').value;
+    
+    const result = await apiCall('/api/territory/place/', 'POST', {
+        name: name,
+        type: type,
+        lat: gameState.territoryCoords.lat,
+        lon: gameState.territoryCoords.lng
+    });
+    
+    if (result.success) {
+        showMessage(`Territory "${name}" placed successfully!`, 'success');
+        bootstrap.Modal.getInstance(document.getElementById('place-territory-modal')).hide();
+        loadPlayerStatus();
+        loadMapData();
+        logActivity(`Placed territory: ${name}`);
+    } else {
+        showMessage(result.error, 'error');
+    }
+    
+    gameState.territoryCoords = null;
+}
+
+async function harvestResource(resourceId) {
+    const result = await apiCall('/api/resource/harvest/', 'POST', {
+        resource_id: resourceId
+    });
+    
+    if (result.success) {
+        showMessage(`Harvested! Gained: ${JSON.stringify(result.yields)}`, 'success');
+        loadPlayerStatus();
+        loadMapData();
+        logActivity(`Harvested resource for ${result.energy_used} energy`);
+    } else {
+        showMessage(result.error, 'error');
+    }
+}
+
+function attackPlayer(playerId, playerName) {
+    gameState.selectedTarget = { id: playerId, name: playerName };
+    
+    document.getElementById('attack-target-info').innerHTML = `
+        <p><strong>Target:</strong> ${playerName}</p>
+        <p class="text-warning">This will cost 3 energy and may result in resource loss if you lose!</p>
+    `;
+    
+    const modal = new bootstrap.Modal(document.getElementById('attack-modal'));
+    modal.show();
+}
+
+async function confirmAttack() {
+    if (!gameState.selectedTarget) return;
+    
+    const result = await apiCall('/api/combat/attack/', 'POST', {
+        target_player_id: gameState.selectedTarget.id
+    });
+    
+    bootstrap.Modal.getInstance(document.getElementById('attack-modal')).hide();
+    
+    if (result.success) {
+        const message = result.victory ? 
+            `Victory! ${result.message}` : 
+            `Defeat! ${result.message}`;
+        
+        showMessage(message, result.victory ? 'success' : 'error');
+        logActivity(`Attacked ${gameState.selectedTarget.name}: ${result.victory ? 'Won' : 'Lost'}`);
+        loadPlayerStatus();
+        loadMapData();
+    } else {
+        showMessage(result.error, 'error');
+    }
+    
+    gameState.selectedTarget = null;
+}
+
+async function spawnResources() {
+    if (!gameState.player) return;
+    
+    const result = await apiCall('/api/admin/spawn/', 'POST', {
+        lat: gameState.player.lat,
+        lon: gameState.player.lon,
+        count: 20
+    });
+    
+    if (result.success) {
+        showMessage(`Spawned ${result.resources_created} resources!`, 'success');
+        loadMapData();
+        logActivity(`Spawned ${result.resources_created} resources`);
+    } else {
+        showMessage(result.error, 'error');
+    }
+}
+
+// Helper Functions
+function showMessage(message, type) {
+    const alertDiv = document.getElementById('action-feedback');
+    alertDiv.className = `alert pk-alert ${type === 'error' ? 'alert-danger' : type === 'success' ? 'alert-success' : 'alert-info'}`;
+    alertDiv.textContent = message;
+    alertDiv.classList.remove('d-none');
+    
+    setTimeout(() => {
+        alertDiv.classList.add('d-none');
+    }, 5000);
+}
+
+function logActivity(message) {
+    const log = document.getElementById('activity-log');
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'text-muted small mb-1';
+    entry.innerHTML = `<strong>${timestamp}</strong>: ${message}`;
+    
+    if (log.children.length === 0) {
+        log.innerHTML = '';
+    }
+    
+    log.insertBefore(entry, log.firstChild);
+    
+    // Keep only last 10 entries
+    while (log.children.length > 10) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Expose functions globally for onclick handlers
+window.harvestResource = harvestResource;
+window.attackPlayer = attackPlayer;
+</script>
+{% endblock %}

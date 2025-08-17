@@ -1,0 +1,2227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMBeta - Location Game</title>
+    
+    <!-- Mapbox GL JS -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+        
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+        
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        
+        #player-info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        #chat-container {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 320px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 8px;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        #chat-messages {
+            height: 160px;
+            overflow-y: auto;
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        #chat-input {
+            width: calc(100% - 20px);
+            padding: 10px;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border-radius: 0 0 8px 8px;
+            font-size: 13px;
+        }
+        
+        #chat-input:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        #status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            min-width: 200px;
+        }
+        
+        .status-item {
+            margin-bottom: 8px;
+        }
+        
+        .status-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        #connection-status {
+            font-weight: bold;
+        }
+        
+        .connected { color: #4CAF50; }
+        .connecting { color: #FFC107; }
+        .disconnected { color: #F44336; }
+        
+        /* Custom Mapbox controls */
+        .mapboxgl-ctrl-group {
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+        }
+        
+        .mapboxgl-ctrl-group button {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        
+        .mapboxgl-ctrl-group button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Movement indicator */
+        .movement-indicator {
+            position: absolute;
+            bottom: 50px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            pointer-events: none;
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Ensure NPC markers are always clickable */
+        .npc-marker {
+            position: relative !important;
+            z-index: 1001 !important;
+            pointer-events: auto !important;
+            width: 44px; /* Increased from 32px for Perblue-style UX */
+            height: 44px;
+            cursor: pointer;
+        }
+        
+        /* NPC marker hover effect */
+        .npc-marker div {
+            transition: transform 0.2s ease, box-shadow 0.3s ease;
+        }
+        
+        .npc-marker div:hover {
+            transform: scale(1.15);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        
+        .resource-marker {
+            position: relative !important;
+            z-index: 1001 !important;
+            pointer-events: auto !important;
+        }
+        
+        .flag-marker {
+            position: relative !important;
+            z-index: 1001 !important;
+            pointer-events: auto !important;
+        }
+        
+        /* Override Mapbox marker styles */
+        .mapboxgl-marker {
+            z-index: 1001 !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Mapbox Container -->
+    <div id="map"></div>
+    
+    <!-- UI Overlay -->
+    <div id="ui-overlay">
+        <!-- Player Info Panel -->
+        <div id="player-info">
+            <div><strong>{{ player.user.username }}</strong></div>
+            <div>Level: {{ player.level }}</div>
+            <div>Cash: $<span id="cash">{{ player.cash|floatformat:0 }}</span></div>
+            <div>Bank: $<span id="bank-money">{{ player.bank_money|floatformat:0 }}</span></div>
+            <div>Reputation: <span id="reputation">{{ player.reputation }}</span></div>
+            <div>Heat Level: <span id="heat-level" style="color: #ff4444;">{{ player.heat_level|floatformat:1 }}</span>%</div>
+            <div>HP: <span id="hp">{{ player.hp }}</span>/100</div>
+        </div>
+        
+        <!-- Status Panel -->
+        <div id="status">
+            <div class="status-item">
+                <div id="connection-status" class="connecting">Connecting...</div>
+            </div>
+            <div class="status-item">
+                <div id="location-info">Location: Loading...</div>
+            </div>
+            <div class="status-item">
+                <div>Players nearby: <span id="nearby-players">0</span></div>
+            </div>
+            <div class="status-item">
+                <div>Flags nearby: <span id="nearby-flags">0</span></div>
+            </div>
+            <div class="status-item">
+                <div>Zoom: <span id="zoom-level">15</span></div>
+            </div>
+        </div>
+        
+        <!-- Right-Click Context Menu (PM Style) -->
+        <div id="context-menu" style="position: absolute; background: rgba(0, 0, 0, 0.95); color: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8); backdrop-filter: blur(15px); border: 1px solid #444; display: none; z-index: 5000; min-width: 180px;">
+            <div id="context-menu-content"></div>
+        </div>
+        
+        <!-- Entity Info Panel (PM Style) -->
+        <div id="entity-info" style="position: absolute; bottom: 200px; left: 10px; background: rgba(0, 0, 0, 0.95); color: white; padding: 20px; border-radius: 12px; pointer-events: auto; backdrop-filter: blur(15px); box-shadow: 0 6px 25px rgba(0, 0, 0, 0.6); border: 1px solid #444; display: none; min-width: 320px; max-width: 400px;">
+            <div id="entity-info-content"></div>
+        </div>
+        
+        <!-- Flag Info Panel -->
+        <div id="flag-info-panel" style="position: absolute; bottom: 200px; left: 10px; background: rgba(0, 0, 0, 0.9); color: white; padding: 15px; border-radius: 8px; pointer-events: auto; backdrop-filter: blur(10px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); display: none; min-width: 300px;">
+            <div id="flag-info-content"></div>
+        </div>
+        
+        <!-- Movement Indicator -->
+        <div id="movement-indicator" class="movement-indicator" style="display: none;">
+            Moving...
+        </div>
+        
+        <!-- Chat Container -->
+        <div id="chat-container">
+            <div id="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Press Enter to chat...">
+        </div>
+    </div>
+
+    <!-- Game JavaScript -->
+    <script>
+        // Mapbox access token - will be set from Django settings
+        mapboxgl.accessToken = '{{ game_settings.MAPBOX_ACCESS_TOKEN }}';
+        
+        // Game state
+        let map = null;
+        let playerMarker = null;
+        let movementCircleLayer = null;
+        let gridLayer = null;
+        let worldSocket = null;
+        let gameEntities = {};
+        let gameMarkers = {};
+        let currentPlayer = {
+            id: '{{ player.id }}',
+            username: '{{ player.user.username }}',
+            lat: {{ player.lat }},
+            lon: {{ player.lon }},
+            center_lat: {{ player.center_lat }},
+            center_lon: {{ player.center_lon }},
+            cash: {{ player.cash }},
+            bank_money: {{ player.bank_money }},
+            level: {{ player.level }},
+            hp: {{ player.hp }},
+            reputation: {{ player.reputation }},
+            heat_level: {{ player.heat_level }}
+        };
+
+        // Initialize Mapbox map
+        function initMap() {
+            console.log('Initializing Mapbox map...');
+            
+            // Check if access token is provided
+            if (!mapboxgl.accessToken || mapboxgl.accessToken === '') {
+                console.error('Mapbox access token not provided');
+                document.getElementById('connection-status').innerHTML = 'Missing Mapbox Token';
+                document.getElementById('connection-status').className = 'disconnected';
+                return;
+            }
+            
+            map = new mapboxgl.Map({
+                container: 'map',
+                style: '{{ game_settings.MAPBOX_STYLE }}',
+                center: [currentPlayer.lon, currentPlayer.lat], // Mapbox uses [lng, lat]
+                zoom: {{ game_settings.ZOOM_LEVEL }},
+                minZoom: 10,
+                maxZoom: 15,
+                pitch: 0,
+                bearing: 0,
+                interactive: true,
+                scrollZoom: true,
+                doubleClickZoom: false
+            });
+            
+            // Add map controls
+            map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+            map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+            
+            map.on('load', function() {
+                console.log('Mapbox map loaded');
+                
+                // Initialize layers and markers
+                initializeMapLayers();
+                createPlayerMarker();
+                drawMovementRange();
+                drawGrid();
+                
+                // Add global click prevention for entity interactions
+                setupEntityClickPrevention();
+                
+                // Connect to WebSocket
+                connectWebSocket();
+                
+                // Update UI
+                updateLocationInfo();
+                updateZoomLevel();
+                
+                console.log('Map initialized successfully');
+            });
+            
+            // Enhanced click detection system with invisible overlay
+            let clickDetectionRadius = 20; // pixels - expand click area
+            let lastClickTime = 0;
+            let clickThrottleMs = 500; // prevent rapid clicking
+            
+            // Add multiple click handlers for better detection
+            map.on('click', function(e) {
+                const clickedLat = e.lngLat.lat;
+                const clickedLon = e.lngLat.lng;
+                const currentTime = Date.now();
+                
+                console.log('🎯 Map clicked at:', clickedLat, clickedLon);
+                console.log('📍 Player position:', currentPlayer.lat, currentPlayer.lon);
+                
+                // Throttle rapid clicks
+                if (currentTime - lastClickTime < clickThrottleMs) {
+                    console.log('⏱️ Click throttled - too rapid');
+                    return;
+                }
+                lastClickTime = currentTime;
+                
+                // Enhanced entity detection with radius
+                if (!checkForEntityClickWithRadius(e.point, clickDetectionRadius)) {
+                    // Show visual feedback for click
+                    showClickFeedback(e.lngLat);
+                    
+                    // Send move command
+                    sendMoveCommand(clickedLat, clickedLon);
+                }
+            });
+            
+            // Add touchstart for mobile support
+            map.on('touchstart', function(e) {
+                if (e.originalEvent.touches.length === 1) {
+                    const touch = e.originalEvent.touches[0];
+                    const rect = map.getCanvas().getBoundingClientRect();
+                    const point = {
+                        x: touch.clientX - rect.left,
+                        y: touch.clientY - rect.top
+                    };
+                    const lngLat = map.unproject([point.x, point.y]);
+                    
+                    if (!checkForEntityClickWithRadius(point, clickDetectionRadius)) {
+                        showClickFeedback(lngLat);
+                        sendMoveCommand(lngLat.lat, lngLat.lng);
+                    }
+                }
+            });
+            
+            // Update zoom level display
+            map.on('zoom', updateZoomLevel);
+            
+            // Prevent default double-click zoom
+            map.on('dblclick', function(e) {
+                e.preventDefault();
+                const clickedLat = e.lngLat.lat;
+                const clickedLon = e.lngLat.lng;
+                sendMoveCommand(clickedLat, clickedLon);
+            });
+        }
+        
+        // Initialize map layers
+        function initializeMapLayers() {
+            // Add movement range circle source
+            map.addSource('movement-range', {
+                type: 'geojson',
+                data: {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [currentPlayer.center_lon, currentPlayer.center_lat]
+                    }
+                }
+            });
+            
+            // Add grid source
+            map.addSource('grid', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+        }
+
+        // Create player marker
+        function createPlayerMarker() {
+            // Create player marker element
+            const el = document.createElement('div');
+            el.className = 'player-marker';
+            el.innerHTML = `
+                <div style="
+                    width: 32px;
+                    height: 32px;
+                    background-color: #FF4444;
+                    border: 3px solid #FFFFFF;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 10px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                    cursor: pointer;
+                ">
+                    ${currentPlayer.username.substring(0, 2).toUpperCase()}
+                </div>
+            `;
+            
+            // Create marker
+            playerMarker = new mapboxgl.Marker(el)
+                .setLngLat([currentPlayer.lon, currentPlayer.lat])
+                .addTo(map);
+        }
+
+        // Draw movement range circle (P2K style)
+        function drawMovementRange() {
+            // Add circle layer for movement range
+            map.addLayer({
+                id: 'movement-range-fill',
+                type: 'circle',
+                source: 'movement-range',
+                paint: {
+                    'circle-radius': {
+                        stops: [
+                            [10, 50],
+                            [15, 200],
+                            [20, 800]
+                        ],
+                        base: 2
+                    },
+                    'circle-color': '#FF4444',
+                    'circle-opacity': 0.1
+                }
+            });
+            
+            map.addLayer({
+                id: 'movement-range-stroke',
+                type: 'circle',
+                source: 'movement-range',
+                paint: {
+                    'circle-radius': {
+                        stops: [
+                            [10, 50],
+                            [15, 200],
+                            [20, 800]
+                        ],
+                        base: 2
+                    },
+                    'circle-color': '#FF4444',
+                    'circle-opacity': 0,
+                    'circle-stroke-color': '#FF4444',
+                    'circle-stroke-width': 2,
+                    'circle-stroke-opacity': 0.8
+                }
+            });
+        }
+
+        // Draw grid overlay (P2K style)
+        function drawGrid() {
+            const bounds = map.getBounds();
+            const gridFeatures = [];
+            
+            // Calculate grid bounds
+            const minLat = Math.floor(bounds.getSouth() * 100) / 100;
+            const maxLat = Math.ceil(bounds.getNorth() * 100) / 100;
+            const minLon = Math.floor(bounds.getWest() * 100) / 100;
+            const maxLon = Math.ceil(bounds.getEast() * 100) / 100;
+            
+            // Create horizontal grid lines
+            for (let lat = minLat; lat <= maxLat; lat += 0.01) {
+                gridFeatures.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [[minLon, lat], [maxLon, lat]]
+                    }
+                });
+            }
+            
+            // Create vertical grid lines
+            for (let lon = minLon; lon <= maxLon; lon += 0.01) {
+                gridFeatures.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [[lon, minLat], [lon, maxLat]]
+                    }
+                });
+            }
+            
+            // Update grid source
+            map.getSource('grid').setData({
+                type: 'FeatureCollection',
+                features: gridFeatures
+            });
+            
+            // Add grid layer if it doesn't exist
+            if (!map.getLayer('grid-lines')) {
+                map.addLayer({
+                    id: 'grid-lines',
+                    type: 'line',
+                    source: 'grid',
+                    paint: {
+                        'line-color': '#888888',
+                        'line-width': 1,
+                        'line-opacity': 0.3
+                    }
+                });
+            }
+        }
+        
+        // Update zoom level display
+        function updateZoomLevel() {
+            if (map) {
+                const zoom = Math.round(map.getZoom() * 10) / 10;
+                document.getElementById('zoom-level').textContent = zoom;
+            }
+        }
+
+        // Connect to WebSocket for real-time updates
+        function connectWebSocket() {
+            const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${wsScheme}://${window.location.host}/ws/game/`;
+            
+            console.log('Connecting to WebSocket:', wsUrl);
+            console.log('Current user:', '{{ user.username }}');
+            console.log('Is authenticated:', '{{ user.is_authenticated }}');
+            
+            worldSocket = new WebSocket(wsUrl);
+            
+            worldSocket.onopen = function(event) {
+                console.log('WebSocket connected');
+                document.getElementById('connection-status').textContent = 'Connected';
+                
+                // Request initial world data
+                sendWebSocketMessage('get_world', {});
+            };
+            
+            worldSocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            worldSocket.onclose = function(event) {
+                console.log('WebSocket disconnected');
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                
+                // Attempt to reconnect
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            worldSocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('connection-status').textContent = 'Error';
+            };
+        }
+
+        // Handle WebSocket messages
+        function handleWebSocketMessage(data) {
+            console.log('WebSocket message:', data);
+            
+            switch (data.type) {
+                case 'world_update':
+                    updateWorld(data.data);
+                    break;
+                case 'player_moved':
+                    handlePlayerMoved(data.data);
+                    break;
+                case 'chat_message':
+                    addChatMessage(data.data);
+                    break;
+                case 'error':
+                    console.error('Server error:', data.message);
+                    break;
+            }
+        }
+
+        // Send WebSocket message
+        function sendWebSocketMessage(type, data) {
+            if (worldSocket && worldSocket.readyState === WebSocket.OPEN) {
+                worldSocket.send(JSON.stringify({
+                    type: type,
+                    data: data
+                }));
+            }
+        }
+
+        // Send move command
+        function sendMoveCommand(lat, lon) {
+            // Check if move is within range from player's CENTER (the red circle)
+            const distance = calculateDistance(currentPlayer.center_lat, currentPlayer.center_lon, lat, lon);
+            const maxRange = 800; // 800m radius from center
+            
+            console.log('=== MOVE DEBUG ===');
+            console.log('Clicked coordinates:', lat, lon);
+            console.log('Player center:', currentPlayer.center_lat, currentPlayer.center_lon);
+            console.log('Distance from center:', Math.round(distance), 'm');
+            
+            if (distance > maxRange) {
+                console.log('Move out of range:', distance, 'meters');
+                addChatMessage({
+                    username: 'System',
+                    message: `Move out of range (${Math.round(distance)}m). Stay within ${maxRange}m of your base.`
+                });
+                return;
+            }
+            
+            console.log('Sending move command:', lat, lon, 'Distance from center:', Math.round(distance), 'm');
+            
+            // Try WebSocket first
+            if (worldSocket && worldSocket.readyState === WebSocket.OPEN) {
+                sendWebSocketMessage('move', {
+                    target: { lat: lat, lon: lon }
+                });
+            } else {
+                // Fallback to REST API
+                console.log('WebSocket not available, using REST API fallback');
+                moveViaRestAPI(lat, lon);
+            }
+        }
+        
+        // Fallback movement via REST API
+        function moveViaRestAPI(lat, lon) {
+            fetch('/api/move/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({ lat: lat, lon: lon })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update our position
+                    currentPlayer.lat = data.data.lat;
+                    currentPlayer.lon = data.data.lon;
+                    
+                    // Update marker position
+                    playerMarker.setLngLat([data.data.lon, data.data.lat]);
+                    
+                    // Update location info
+                    updateLocationInfo();
+                    
+                    addChatMessage({
+                        username: 'System',
+                        message: `Moved to ${data.data.lat.toFixed(6)}, ${data.data.lon.toFixed(6)}`
+                    });
+                } else {
+                    console.error('Move failed:', data.error);
+                    addChatMessage({
+                        username: 'System',
+                        message: `Move failed: ${data.error}`
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Move request failed:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: 'Move request failed. Check connection.'
+                });
+            });
+        }
+        
+        // Get CSRF token for API requests
+        function getCSRFToken() {
+            const name = 'csrftoken';
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        // Calculate distance between two points in meters
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Earth radius in meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        
+        // Setup global entity click prevention
+        function setupEntityClickPrevention() {
+            console.log('Setting up global entity click prevention');
+            
+            // Get the map container element
+            const mapContainer = document.querySelector('.mapboxgl-canvas-container');
+            if (!mapContainer) {
+                console.error('Map container not found for click prevention setup');
+                return;
+            }
+            
+            // Add a capture phase event listener to catch all clicks
+            mapContainer.addEventListener('mousedown', function(e) {
+                // Check if clicked element or any parent is a marker
+                let target = e.target;
+                while (target && target !== mapContainer) {
+                    if (
+                        target.classList && (
+                            target.classList.contains('npc-marker') ||
+                            target.classList.contains('resource-marker') ||
+                            target.classList.contains('flag-marker') ||
+                            target.classList.contains('player-marker') ||
+                            target.classList.contains('other-player-marker') ||
+                            target.classList.contains('structure-marker')
+                        )
+                    ) {
+                        // Stop propagation to prevent map panning/zooming
+                        e.stopPropagation();
+                        console.log('Prevented map interaction for entity click');
+                        return;
+                    }
+                    target = target.parentElement;
+                }
+            }, true); // Use capture phase to intercept before map handlers
+            
+            console.log('Entity click prevention setup complete');
+        }
+        
+        // Enhanced entity detection with radius
+        function checkForEntityClickWithRadius(point, radius) {
+            // Check for clickable entities within a radius of the clicked point
+            // This makes it easier to click on small targets
+            
+            console.log('📍 Checking for entities with radius:', radius, 'px');
+            
+            // Check NPC markers (priority entities)
+            for (const npcId in npcMarkers) {
+                const marker = npcMarkers[npcId];
+                const npc = gameEntities[npcId];
+                
+                if (!npc || !marker) continue;
+                
+                // Get marker position in screen coordinates
+                const markerPos = map.project([npc.lon, npc.lat]);
+                const distance = Math.sqrt(
+                    Math.pow(markerPos.x - point.x, 2) + 
+                    Math.pow(markerPos.y - point.y, 2)
+                );
+                
+                if (distance <= radius) {
+                    console.log('🎯 Found NPC within click radius:', npc.name);
+                    
+                    // Trigger the same action as direct click
+                    const physicalDistance = calculateDistance(
+                        currentPlayer.lat, currentPlayer.lon,
+                        npc.lat, npc.lon
+                    );
+                    
+                    if (physicalDistance <= 50 && npc.is_alive) {
+                        console.log('⚔️ Attacking NPC:', npc.name);
+                        attackNPC(npc.id);
+                    } else {
+                        console.log('ℹ️ Showing NPC info:', npc.name);
+                        showNPCInfo(npc);
+                    }
+                    return true;
+                }
+            }
+            
+            // Check resource markers
+            for (const resourceId in resourceMarkers) {
+                const marker = resourceMarkers[resourceId];
+                const resource = gameEntities[resourceId];
+                
+                if (!resource || !marker) continue;
+                
+                // Get marker position in screen coordinates
+                const markerPos = map.project([resource.lon, resource.lat]);
+                const distance = Math.sqrt(
+                    Math.pow(markerPos.x - point.x, 2) + 
+                    Math.pow(markerPos.y - point.y, 2)
+                );
+                
+                if (distance <= radius) {
+                    console.log('🎯 Found resource within click radius:', resource.resource_type);
+                    
+                    // Trigger the same action as direct click
+                    const physicalDistance = calculateDistance(
+                        currentPlayer.lat, currentPlayer.lon,
+                        resource.lat, resource.lon
+                    );
+                    
+                    if (physicalDistance <= 50 && resource.can_harvest) {
+                        console.log('🌲 Harvesting resource:', resource.resource_type);
+                        harvestResource(resource.id);
+                    } else {
+                        console.log('ℹ️ Showing resource info:', resource.resource_type);
+                        showResourceInfo(resource);
+                    }
+                    return true;
+                }
+            }
+            
+            // Check flag markers
+            for (const flagId in flagMarkers) {
+                const marker = flagMarkers[flagId];
+                const flag = gameEntities[flagId];
+                
+                if (!flag || !marker) continue;
+                
+                // Get marker position in screen coordinates
+                const markerPos = map.project([flag.lon, flag.lat]);
+                const distance = Math.sqrt(
+                    Math.pow(markerPos.x - point.x, 2) + 
+                    Math.pow(markerPos.y - point.y, 2)
+                );
+                
+                if (distance <= radius) {
+                    console.log('🎯 Found flag within click radius:', flag.name);
+                    showFlagInfo(flag);
+                    return true;
+                }
+            }
+            
+            console.log('🔍 No entities found within click radius');
+            return false; // No entity found within radius
+        }
+        
+        // Show visual feedback for click
+        function showClickFeedback(lngLat) {
+            // Add a temporary circle at the click location
+            const clickFeedbackId = 'click-feedback-' + Date.now();
+            
+            // Add a source and layer for the click feedback
+            map.addSource(clickFeedbackId, {
+                type: 'geojson',
+                data: {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [lngLat.lng, lngLat.lat]
+                    }
+                }
+            });
+            
+            // Add an expanding circle
+            map.addLayer({
+                id: clickFeedbackId,
+                type: 'circle',
+                source: clickFeedbackId,
+                paint: {
+                    'circle-radius': [
+                        'interpolate',
+                        ['linear'],
+                        ['get', 'animationProgress'],
+                        0, 5,
+                        1, 30
+                    ],
+                    'circle-color': '#FF4444',
+                    'circle-opacity': [
+                        'interpolate',
+                        ['linear'],
+                        ['get', 'animationProgress'],
+                        0, 0.6,
+                        1, 0
+                    ],
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#FFFFFF',
+                    'circle-stroke-opacity': [
+                        'interpolate',
+                        ['linear'],
+                        ['get', 'animationProgress'],
+                        0, 0.8,
+                        1, 0
+                    ]
+                }
+            });
+            
+            // Animate the feedback
+            const startTime = Date.now();
+            const duration = 600; // milliseconds
+            
+            function animateClickFeedback() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                map.getSource(clickFeedbackId).setData({
+                    type: 'Feature',
+                    properties: {
+                        animationProgress: progress
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [lngLat.lng, lngLat.lat]
+                    }
+                });
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animateClickFeedback);
+                } else {
+                    // Remove the feedback after animation completes
+                    setTimeout(() => {
+                        if (map.getLayer(clickFeedbackId)) {
+                            map.removeLayer(clickFeedbackId);
+                        }
+                        if (map.getSource(clickFeedbackId)) {
+                            map.removeSource(clickFeedbackId);
+                        }
+                    }, 100);
+                }
+            }
+            
+            animateClickFeedback();
+        }
+        
+        // Check if click point intersects with any entity markers (legacy)
+        function checkForEntityClick(point) {
+            // This function helps prevent movement when clicking on entity markers
+            // The individual marker click handlers will handle the interaction
+            // We return false to allow movement, markers handle their own clicks with stopPropagation
+            return false;
+        }
+
+        // Update world entities
+        function updateWorld(worldData) {
+            console.log('Updating world:', worldData);
+            
+            // Update players
+            if (worldData.players) {
+                Object.values(worldData.players).forEach(player => {
+                    updatePlayerMarker(player);
+                });
+            }
+            
+            // Update structures
+            if (worldData.structures) {
+                Object.values(worldData.structures).forEach(structure => {
+                    updateStructureMarker(structure);
+                });
+            }
+            
+            // Update nearby players count
+            const nearbyCount = worldData.players ? Object.keys(worldData.players).length - 1 : 0;
+            document.getElementById('nearby-players').textContent = nearbyCount;
+        }
+
+        // Handle player movement
+        function handlePlayerMoved(moveData) {
+            console.log('Player moved:', moveData);
+            
+            if (moveData.player_id === currentPlayer.id) {
+                // Update our own position
+                currentPlayer.lat = moveData.end.lat;
+                currentPlayer.lon = moveData.end.lon;
+                
+                // Animate movement
+                animatePlayerMovement(playerMarker, moveData.start, moveData.end);
+                updateLocationInfo();
+            } else {
+                // Update other player
+                const marker = gameEntities[moveData.player_id];
+                if (marker) {
+                    animatePlayerMovement(marker, moveData.start, moveData.end);
+                }
+            }
+        }
+
+        // Animate player movement
+        function animatePlayerMovement(marker, start, end) {
+            const duration = Math.max((end.timestamp - start.timestamp) * 1000, 1000); // Minimum 1 second
+            const startTime = Date.now();
+            
+            // Show movement indicator
+            document.getElementById('movement-indicator').style.display = 'block';
+            
+            function animate() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                const lat = start.lat + (end.lat - start.lat) * progress;
+                const lon = start.lon + (end.lon - start.lon) * progress;
+                
+                // Use Mapbox marker method
+                marker.setLngLat([lon, lat]);
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    // Hide movement indicator when done
+                    document.getElementById('movement-indicator').style.display = 'none';
+                }
+            }
+            
+            animate();
+        }
+
+        // Update player marker
+        function updatePlayerMarker(playerData) {
+            if (playerData.id === currentPlayer.id) {
+                return; // Don't update our own marker here
+            }
+            
+            let marker = gameMarkers[playerData.id];
+            if (!marker) {
+                // Create new marker element for other player
+                const el = document.createElement('div');
+                el.className = 'other-player-marker';
+                el.innerHTML = `
+                    <div style="
+                        width: 30px;
+                        height: 30px;
+                        background-color: #4444FF;
+                        border: 2px solid #FFFFFF;
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: white;
+                        font-weight: bold;
+                        font-size: 9px;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                        cursor: pointer;
+                    ">
+                        ${playerData.username.substring(0, 2).toUpperCase()}
+                    </div>
+                `;
+                
+                // Add click handler for player interaction
+                el.addEventListener('click', function() {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Clicked on ${playerData.username}`
+                    });
+                });
+                
+                marker = new mapboxgl.Marker(el)
+                    .setLngLat([playerData.lon, playerData.lat])
+                    .addTo(map);
+                    
+                gameMarkers[playerData.id] = marker;
+                gameEntities[playerData.id] = playerData;
+            } else {
+                // Update existing marker position
+                marker.setLngLat([playerData.lon, playerData.lat]);
+                gameEntities[playerData.id] = playerData;
+            }
+        }
+
+        // Update structure marker
+        function updateStructureMarker(structureData) {
+            let marker = gameMarkers[structureData.id];
+            if (!marker) {
+                const structureIcons = {
+                    1: { icon: '🌳', color: '#4CAF50' }, // Tree
+                    2: { icon: '🪨', color: '#795548' }, // Rock
+                    3: { icon: '🏠', color: '#2196F3' }, // Building
+                    4: { icon: '🚩', color: '#F44336' }, // Flag
+                    5: { icon: '🏛️', color: '#9C27B0' }  // City
+                };
+                
+                const structInfo = structureIcons[structureData.type] || { icon: '⚪', color: '#999' };
+                
+                // Create structure marker element
+                const el = document.createElement('div');
+                el.className = 'structure-marker';
+                el.innerHTML = `
+                    <div style="
+                        width: 28px;
+                        height: 28px;
+                        background-color: ${structInfo.color};
+                        border: 2px solid #FFFFFF;
+                        border-radius: 6px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 14px;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                        cursor: pointer;
+                        transition: transform 0.2s ease;
+                    " 
+                    onmouseover="this.style.transform='scale(1.1)'" 
+                    onmouseout="this.style.transform='scale(1)'">
+                        ${structInfo.icon}
+                    </div>
+                `;
+                
+                // Add click handler for structure interaction
+                el.addEventListener('click', function() {
+                    handleStructureClick(structureData);
+                });
+                
+                marker = new mapboxgl.Marker(el)
+                    .setLngLat([structureData.lon, structureData.lat])
+                    .addTo(map);
+                    
+                // Add popup for structure info
+                const popup = new mapboxgl.Popup({ offset: 25 })
+                    .setHTML(`
+                        <div style="text-align: center;">
+                            <strong>${structureData.type_name || 'Structure'}</strong><br>
+                            <small>HP: ${structureData.hp || '?'}</small>
+                        </div>
+                    `);
+                
+                marker.setPopup(popup);
+                    
+                gameMarkers[structureData.id] = marker;
+                gameEntities[structureData.id] = structureData;
+            }
+        }
+        
+        // Handle structure click
+        function handleStructureClick(structureData) {
+            const distance = calculateDistance(
+                currentPlayer.lat, currentPlayer.lon,
+                structureData.lat, structureData.lon
+            );
+            
+            if (distance > 50) { // Within 50 meters
+                addChatMessage({
+                    username: 'System',
+                    message: `Too far from ${structureData.type_name || 'structure'} (${Math.round(distance)}m away)`
+                });
+                return;
+            }
+            
+            // Send harvest/interact command
+            sendWebSocketMessage('interact', {
+                target_id: structureData.id,
+                target_type: 'structure',
+                action: 'harvest'
+            });
+            
+            addChatMessage({
+                username: 'System',
+                message: `Interacting with ${structureData.type_name || 'structure'}...`
+            });
+        }
+
+        // Update location info
+        function updateLocationInfo() {
+            const latStr = currentPlayer.lat.toFixed(6);
+            const lonStr = currentPlayer.lon.toFixed(6);
+            document.getElementById('location-info').textContent = `Location: ${latStr}, ${lonStr}`;
+        }
+
+        // Add chat message
+        function addChatMessage(messageData) {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.innerHTML = `<strong>${messageData.username}:</strong> ${messageData.message}`;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Chat input handler
+        document.getElementById('chat-input').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                const message = this.value.trim();
+                if (message) {
+                    sendWebSocketMessage('chat', { message: message });
+                    this.value = '';
+                }
+            }
+        });
+
+        // ===============================
+        // RIGHT-CLICK CONTEXT MENU SYSTEM (PM STYLE)
+        // ===============================
+        
+        let contextMenuVisible = false;
+        let contextMenuData = null;
+        let rightClickCoords = null;
+        
+        // Add right-click event to map
+        document.addEventListener('DOMContentLoaded', function() {
+            // Prevent default right-click menu
+            document.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+            });
+            
+            // Add right-click handler to map container
+            setTimeout(() => {
+                if (map) {
+                    map.getCanvas().addEventListener('contextmenu', handleMapRightClick);
+                }
+            }, 1000);
+        });
+        
+        // Handle right-click on map
+        function handleMapRightClick(e) {
+            e.preventDefault();
+            
+            const rect = map.getCanvas().getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Convert pixel coordinates to lat/lng
+            const lngLat = map.unproject([x, y]);
+            rightClickCoords = { lat: lngLat.lat, lon: lngLat.lng };
+            
+            // Show context menu at cursor position
+            showContextMenu(e.clientX, e.clientY, rightClickCoords);
+        }
+        
+        // Show context menu
+        function showContextMenu(x, y, coords) {
+            const contextMenu = document.getElementById('context-menu');
+            const contextContent = document.getElementById('context-menu-content');
+            
+            // Check what's at this location
+            checkLocationContent(coords).then(locationData => {
+                const menuItems = generateContextMenuItems(locationData, coords);
+                
+                contextContent.innerHTML = menuItems.map(item => 
+                    `<div onclick="${item.action}" style="padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #333; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+                        <div style="font-weight: bold; color: ${item.color || '#fff'}; margin-bottom: 2px;">${item.icon} ${item.title}</div>
+                        ${item.subtitle ? `<div style="font-size: 11px; color: #aaa;">${item.subtitle}</div>` : ''}
+                    </div>`
+                ).join('');
+                
+                // Position menu
+                contextMenu.style.left = Math.min(x, window.innerWidth - 220) + 'px';
+                contextMenu.style.top = Math.min(y, window.innerHeight - 200) + 'px';
+                contextMenu.style.display = 'block';
+                
+                contextMenuVisible = true;
+                
+                // Hide menu on click elsewhere
+                setTimeout(() => {
+                    document.addEventListener('click', hideContextMenu, { once: true });
+                }, 100);
+            });
+        }
+        
+        // Hide context menu
+        function hideContextMenu() {
+            document.getElementById('context-menu').style.display = 'none';
+            contextMenuVisible = false;
+            rightClickCoords = null;
+        }
+        
+        // Check what entities exist at location
+        async function checkLocationContent(coords) {
+            const distance = calculateDistance(currentPlayer.lat, currentPlayer.lon, coords.lat, coords.lon);
+            
+            // Check for nearby flags
+            const nearbyFlags = await findNearbyFlags(coords, 50); // 50m radius
+            const nearbyNPCs = await findNearbyNPCs(coords, 50);
+            const nearbyResources = await findNearbyResources(coords, 50);
+            
+            return {
+                coords,
+                distance,
+                canReach: distance <= 800, // Movement range
+                isClose: distance <= 50,   // Interaction range
+                flags: nearbyFlags,
+                npcs: nearbyNPCs,
+                resources: nearbyResources
+            };
+        }
+        
+        // Generate context menu items based on location
+        function generateContextMenuItems(locationData, coords) {
+            const items = [];
+            const { distance, canReach, isClose, flags, npcs, resources } = locationData;
+            
+            // No movement option in right-click menu anymore
+            // Right-click is only for flag placement and viewing info
+            
+            // Flag options
+            if (flags.length > 0) {
+                const flag = flags[0];
+                if (flag.is_owned_by_player) {
+                    items.push({
+                        icon: '🏴',
+                        title: `Upgrade ${flag.name}`,
+                        subtitle: `Level ${flag.level} → ${flag.level + 1}`,
+                        color: '#FFD700',
+                        action: `upgradeFlagAction('${flag.id}'); hideContextMenu();`
+                    });
+                    items.push({
+                        icon: '🎯',
+                        title: 'Jump to Flag',
+                        subtitle: 'Teleport to flag location',
+                        color: '#2196F3',
+                        action: `jumpToFlag('${flag.id}'); hideContextMenu();`
+                    });
+                } else if (flag.can_attack && isClose) {
+                    items.push({
+                        icon: '⚔️',
+                        title: `Attack ${flag.name}`,
+                        subtitle: `Owned by ${flag.owner}`,
+                        color: '#F44336',
+                        action: `attackFlagAction('${flag.id}'); hideContextMenu();`
+                    });
+                } else {
+                    items.push({
+                        icon: '🛡️',
+                        title: `View ${flag.name}`,
+                        subtitle: flag.is_invulnerable ? 'Protected' : `${flag.hp}/${flag.max_hp} HP`,
+                        color: '#FFC107',
+                        action: `viewFlagInfo('${flag.id}'); hideContextMenu();`
+                    });
+                }
+            } else if (isClose) {
+                // Check if player can place a flag here
+                const canPlaceFlag = canPlaceFlagHere(coords);
+                console.log('Can place flag here?', canPlaceFlag, 'Player cash:', currentPlayer.cash);
+                
+                if (canPlaceFlag) {
+                    items.push({
+                        icon: '🚩',
+                        title: 'Place Flag',
+                        subtitle: 'Cost: $50,000',
+                        color: '#FF4444',
+                        action: `showFlagPlacementDialog(${coords.lat}, ${coords.lon}); hideContextMenu();`
+                    });
+                } else {
+                    // Show why they can't place a flag
+                    if (currentPlayer.cash < 50000) {
+                        items.push({
+                            icon: '💰',
+                            title: 'Need More Cash',
+                            subtitle: `Need $${(50000 - currentPlayer.cash).toLocaleString()} more`,
+                            color: '#FFC107',
+                            action: 'hideContextMenu();'
+                        });
+                    } else {
+                        items.push({
+                            icon: '⚠️',
+                            title: 'Too Close to Flag',
+                            subtitle: 'Flags must be 200m apart',
+                            color: '#FF9800',
+                            action: 'hideContextMenu();'
+                        });
+                    }
+                }
+            }
+            
+            // NPC and resource options removed from right-click menu
+            // These are now handled by left-click directly
+            
+            return items;
+        }
+        
+        // Check if flag can be placed at coordinates
+        function canPlaceFlagHere(coords) {
+            // Check minimum distance from other flags (PM style)
+            for (const flagId in flagMarkers) {
+                const flag = gameEntities[flagId];
+                if (flag) {
+                    const distance = calculateDistance(coords.lat, coords.lon, flag.lat, flag.lon);
+                    if (distance < 200) { // 200m minimum distance
+                        return false;
+                    }
+                }
+            }
+            return currentPlayer.cash >= 50000; // Has enough money
+        }
+        
+        // Get resource icon
+        function getResourceIcon(resourceType) {
+            const icons = {
+                'tree': '🌳',
+                'iron_mine': '⛏️',
+                'gold_mine': '🪙',
+                'stone_quarry': '🪨',
+                'herb_patch': '🌿',
+                'ruins': '🏛️',
+                'cave': '🕳️',
+                'well': '🌊'
+            };
+            return icons[resourceType] || '📦';
+        }
+        
+        // ===============================
+        // FLAG SYSTEM FUNCTIONS
+        // ===============================
+        
+        let flagMarkers = {};
+        let npcMarkers = {};
+        let resourceMarkers = {};
+        
+        // Load all game entities
+        function loadGameEntities() {
+            loadFlags();
+            loadNPCs();
+            loadResources();
+        }
+        
+        // Load flags from server
+        function loadFlags() {
+            fetch('/api/flags/', {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': getCSRFToken()
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayFlags(data.data.flags);
+                    document.getElementById('nearby-flags').textContent = data.data.flags.length;
+                } else {
+                    console.error('Failed to load flags:', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading flags:', error);
+            });
+        }
+        
+        // Display flags on map
+        function displayFlags(flags) {
+            // Clear existing flag markers
+            Object.values(flagMarkers).forEach(marker => marker.remove());
+            flagMarkers = {};
+            
+            flags.forEach(flag => {
+                createFlagMarker(flag);
+                gameEntities[flag.id] = flag; // Store for context menu
+            });
+        }
+        
+        // Create flag marker
+        function createFlagMarker(flag) {
+            const flagTypeColors = {
+                'territory': '#ff4444',
+                'outpost': '#44ff44', 
+                'stronghold': '#4444ff',
+                'watchtower': '#ffff44',
+                'family': '#ff44ff'
+            };
+            
+            const color = flagTypeColors[flag.flag_type] || '#ff4444';
+            const isOwned = flag.is_owned_by_player;
+            const canAttack = flag.can_attack;
+            
+            // Create flag marker element
+            const el = document.createElement('div');
+            el.className = 'flag-marker';
+            el.innerHTML = `
+                <div style="
+                    width: 36px;
+                    height: 36px;
+                    background-color: ${color};
+                    border: 3px solid ${isOwned ? '#FFD700' : '#FFFFFF'};
+                    border-radius: 8px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 18px;
+                    box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+                    cursor: pointer;
+                    transition: transform 0.2s ease;
+                    ${flag.is_invulnerable ? 'opacity: 0.7; border-style: dashed;' : ''}
+                " 
+                onmouseover="this.style.transform='scale(1.2)'" 
+                onmouseout="this.style.transform='scale(1)'">
+                    🏴
+                </div>
+            `;
+            
+            // Add click handler for flag interaction
+            el.addEventListener('click', function(e) {
+                e.stopPropagation();
+                showFlagInfo(flag);
+            });
+            
+            const marker = new mapboxgl.Marker(el)
+                .setLngLat([flag.lon, flag.lat])
+                .addTo(map);
+            
+            // Add popup with basic info
+            const popup = new mapboxgl.Popup({ offset: 25, closeButton: false })
+                .setHTML(`
+                    <div style="text-align: center; min-width: 150px;">
+                        <strong style="color: ${color};">${flag.name}</strong><br>
+                        <small>Owner: ${flag.owner}</small><br>
+                        <small>Level ${flag.level} | HP: ${flag.hp}/${flag.max_hp}</small><br>
+                        <small>Income: $${flag.income_per_hour}/hr</small><br>
+                        <small>${Math.round(flag.distance)}m away</small>
+                        ${flag.is_invulnerable ? '<br><em style="color: #ffc107;">Protected</em>' : ''}
+                    </div>
+                `);
+            
+            marker.setPopup(popup);
+            flagMarkers[flag.id] = marker;
+        }
+        
+        // Show flag placement dialog
+        function showFlagPlacement() {
+            document.getElementById('flag-placement-dialog').style.display = 'block';
+            document.getElementById('flag-name-input').focus();
+        }
+        
+        // Cancel flag placement
+        function cancelFlagPlacement() {
+            document.getElementById('flag-placement-dialog').style.display = 'none';
+            document.getElementById('flag-name-input').value = '';
+        }
+        
+        // Confirm flag placement
+        function confirmFlagPlacement() {
+            const flagName = document.getElementById('flag-name-input').value.trim();
+            const flagType = document.getElementById('flag-type-select').value;
+            
+            if (!flagName) {
+                addChatMessage({
+                    username: 'System',
+                    message: 'Flag name is required!'
+                });
+                return;
+            }
+            
+            // Place flag at player's current location
+            placeFlag(currentPlayer.lat, currentPlayer.lon, flagName, flagType);
+            cancelFlagPlacement();
+        }
+        
+        // Place flag via API
+        function placeFlag(lat, lon, name, type) {
+            fetch('/api/flags/place/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    lat: lat,
+                    lon: lon,
+                    name: name,
+                    type: type
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Flag '${data.data.name}' placed successfully! Cost: $50,000`
+                    });
+                    
+                    // Update player cash
+                    currentPlayer.cash -= 50000;
+                    document.getElementById('cash').textContent = currentPlayer.cash.toLocaleString();
+                    
+                    // Refresh flags to show new one
+                    refreshFlags();
+                } else {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Failed to place flag: ${data.error}`
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Flag placement error:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: 'Failed to place flag. Check connection.'
+                });
+            });
+        }
+        
+        // Show flag information panel
+        function showFlagInfo(flag) {
+            const panel = document.getElementById('flag-info-panel');
+            const content = document.getElementById('flag-info-content');
+            
+            const statusColor = {
+                'active': '#4CAF50',
+                'under_attack': '#FF9800',
+                'captured': '#2196F3',
+                'abandoned': '#757575'
+            }[flag.status] || '#999';
+            
+            content.innerHTML = `
+                <h3 style="margin: 0 0 10px 0; color: #ff4444;">🏴 ${flag.name}</h3>
+                <div><strong>Owner:</strong> ${flag.owner}</div>
+                <div><strong>Family:</strong> ${flag.controlling_family || 'Independent'}</div>
+                <div><strong>Type:</strong> ${flag.flag_type.charAt(0).toUpperCase() + flag.flag_type.slice(1)}</div>
+                <div><strong>Level:</strong> ${flag.level}</div>
+                <div><strong>Status:</strong> <span style="color: ${statusColor}">${flag.status}</span></div>
+                <div><strong>HP:</strong> ${flag.hp}/${flag.max_hp}</div>
+                <div><strong>Defense:</strong> ${flag.defense_rating}</div>
+                <div><strong>Income:</strong> $${flag.income_per_hour}/hour</div>
+                <div><strong>Distance:</strong> ${Math.round(flag.distance)}m</div>
+                ${flag.is_invulnerable ? '<div style="color: #ffc107;"><strong>Protected until capture cooldown expires</strong></div>' : ''}
+                <div style="margin-top: 15px;">
+                    ${flag.is_owned_by_player 
+                        ? '<button onclick="upgradeFlagDialog(\'' + flag.id + '\')" style="padding: 8px 16px; background: #28a745; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 5px;">Upgrade</button>' 
+                        : (flag.can_attack 
+                            ? '<button onclick="attackFlag(\'' + flag.id + '\')" style="padding: 8px 16px; background: #dc3545; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 5px;">Attack</button>' 
+                            : '<button disabled style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: not-allowed; margin-right: 5px;">Cannot Attack</button>'
+                        )
+                    }
+                    <button onclick="hideFlagInfo()" style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: pointer;">Close</button>
+                </div>
+            `;
+            
+            panel.style.display = 'block';
+        }
+        
+        // Hide flag info panel
+        function hideFlagInfo() {
+            document.getElementById('flag-info-panel').style.display = 'none';
+        }
+        
+        // Attack flag
+        function attackFlag(flagId) {
+            if (!confirm('Are you sure you want to attack this flag? This will cost energy and may fail.')) {
+                return;
+            }
+            
+            fetch('/api/flags/attack/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    flag_id: flagId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const result = data.data;
+                    addChatMessage({
+                        username: 'System',
+                        message: result.message
+                    });
+                    
+                    if (result.attack_successful) {
+                        // Update player stats
+                        currentPlayer.reputation += result.reputation_gained;
+                        currentPlayer.cash += result.money_gained;
+                        document.getElementById('reputation').textContent = currentPlayer.reputation;
+                        document.getElementById('cash').textContent = currentPlayer.cash.toLocaleString();
+                    }
+                    
+                    // Refresh flags to show updated status
+                    refreshFlags();
+                    hideFlagInfo();
+                } else {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Attack failed: ${data.error}`
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Flag attack error:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: 'Failed to attack flag. Check connection.'
+                });
+            });
+        }
+        
+        // Toggle flag display
+        function toggleFlagDisplay() {
+            flagsVisible = !flagsVisible;
+            
+            if (flagsVisible) {
+                refreshFlags();
+                document.getElementById('btn-show-flags').textContent = 'Hide Flags';
+            } else {
+                Object.values(flagMarkers).forEach(marker => marker.remove());
+                flagMarkers = {};
+                document.getElementById('btn-show-flags').textContent = 'Show Flags';
+                document.getElementById('nearby-flags').textContent = '0';
+            }
+        }
+        
+        // Refresh flags
+        function refreshFlags() {
+            loadFlags();
+        }
+        
+        // Upgrade flag dialog (placeholder)
+        function upgradeFlagDialog(flagId) {
+            addChatMessage({
+                username: 'System',
+                message: 'Flag upgrades coming soon!'
+            });
+        }
+        
+        // Show/hide flag controls with F key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'f' || event.key === 'F') {
+                const controls = document.getElementById('flag-controls');
+                if (controls.style.display === 'none' || !controls.style.display) {
+                    controls.style.display = 'block';
+                    // Load flags when first opening
+                    if (Object.keys(flagMarkers).length === 0 && flagsVisible) {
+                        refreshFlags();
+                    }
+                } else {
+                    controls.style.display = 'none';
+                }
+            }
+        });
+        
+        // ===============================
+        // NPC AND RESOURCE FUNCTIONS
+        // ===============================
+        
+        // Professional NPC loading with proper error handling
+        async function loadNPCs() {
+            try {
+                console.log('🔄 Loading NPCs from server...');
+                const response = await fetch('/api/npcs/', {
+                    method: 'GET',
+                    headers: {
+                        'X-CSRFToken': getCSRFToken(),
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'same-origin'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                if (!data.success) {
+                    throw new Error(data.error || 'API returned success=false');
+                }
+                
+                const npcs = data.data?.npcs || [];
+                console.log(`✓ Successfully loaded ${npcs.length} NPCs from server`);
+                
+                if (npcs.length > 0) {
+                    displayNPCs(npcs);
+                } else {
+                    console.warn('⚠ No NPCs returned from server');
+                    addChatMessage({
+                        username: 'System',
+                        message: 'No NPCs found in the area. Try exploring!'
+                    });
+                }
+                
+            } catch (error) {
+                console.error('❌ Failed to load NPCs:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: `Failed to load NPCs: ${error.message}`
+                });
+            }
+        }
+        
+        // Display NPCs on map
+        function displayNPCs(npcs) {
+            // Clear existing NPC markers
+            Object.values(npcMarkers).forEach(marker => marker.remove());
+            npcMarkers = {};
+            
+            npcs.forEach(npc => {
+                createNPCMarker(npc);
+                gameEntities[npc.id] = npc;
+            });
+        }
+        
+        // Create NPC marker
+        function createNPCMarker(npc) {
+            const color = npc.is_alive ? '#FF5722' : '#757575';
+            
+            // Extract first two letters of NPC name for display
+            const nameInitials = npc.name ? npc.name.substring(0, 2).toUpperCase() : 'NP';
+            
+            const el = document.createElement('div');
+            el.className = 'npc-marker';
+            
+            el.innerHTML = `
+                <div style="
+                    width: 44px;
+                    height: 44px;
+                    background: linear-gradient(135deg, ${color} 0%, ${color}AA 100%);
+                    border: 3px solid #FFFFFF;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 12px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.4), 0 2px 8px rgba(255,255,255,0.1) inset;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+                    position: relative;
+                    ${!npc.is_alive ? 'opacity: 0.5; filter: grayscale(50%);' : ''}
+                    ${npc.is_alive ? 'animation: subtlePulse 3s infinite ease-in-out;' : ''}
+                ">
+                    ${nameInitials}
+                    ${npc.is_alive ? '<div style="position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; background: #4CAF50; border: 1px solid white; border-radius: 50%; box-shadow: 0 0 4px rgba(76, 175, 80, 0.6);"></div>' : ''}
+                </div>
+            `;
+            
+            // Add the subtle pulse animation if it doesn't exist
+            if (!document.getElementById('npc-animations')) {
+                const style = document.createElement('style');
+                style.id = 'npc-animations';
+                style.textContent = `
+                    @keyframes subtlePulse {
+                        0%, 100% { transform: scale(1); opacity: 1; }
+                        50% { transform: scale(1.05); opacity: 0.9; }
+                    }
+                    
+                    .npc-marker:hover div {
+                        animation: none !important;
+                        transform: scale(1.1) !important;
+                        box-shadow: 0 6px 16px rgba(0,0,0,0.5), 0 2px 12px rgba(255,255,255,0.2) inset !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            // Add click event with better handling
+            el.addEventListener('click', function(e) {
+                console.log('NPC marker clicked:', npc.name, npc.id);
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                
+                // Left click directly attacks if close enough, otherwise shows info
+                const distance = calculateDistance(
+                    currentPlayer.lat, currentPlayer.lon,
+                    npc.lat, npc.lon
+                );
+                
+                console.log('Distance to NPC:', distance);
+                
+                if (distance <= 50 && npc.is_alive) {
+                    console.log('Attacking NPC:', npc.name);
+                    attackNPC(npc.id);
+                } else {
+                    console.log('Showing NPC info:', npc.name);
+                    showNPCInfo(npc);
+                }
+                
+                return false;
+            }, true); // Use capture phase
+            
+            // Also add mousedown event as backup
+            el.addEventListener('mousedown', function(e) {
+                e.stopPropagation();
+            }, true);
+            
+            const marker = new mapboxgl.Marker({
+                element: el,
+                anchor: 'center'
+            })
+                .setLngLat([npc.lon, npc.lat])
+                .addTo(map);
+            
+            // Debug log NPC position
+            console.log(`NPC ${npc.name} placed at: ${npc.lat}, ${npc.lon}`);
+            
+            const popup = new mapboxgl.Popup({ offset: 25, closeButton: false })
+                .setHTML(`
+                    <div style="text-align: center; min-width: 120px;">
+                        <strong>${npc.name}</strong><br>
+                        <small>Level ${npc.level} ${npc.npc_type}</small><br>
+                        <small>HP: ${npc.current_hp}/${npc.max_hp}</small><br>
+                        ${npc.is_alive ? '<em style="color: #4CAF50">Alive</em>' : '<em style="color: #757575">Dead</em>'}
+                    </div>
+                `);
+            
+            marker.setPopup(popup);
+            npcMarkers[npc.id] = marker;
+        }
+        
+        // Load resources from server
+        function loadResources() {
+            fetch('/api/resources/', {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': getCSRFToken()
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayResources(data.data.resources);
+                } else {
+                    console.error('Failed to load resources:', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading resources:', error);
+            });
+        }
+        
+        // Display resources on map
+        function displayResources(resources) {
+            // Clear existing resource markers
+            Object.values(resourceMarkers).forEach(marker => marker.remove());
+            resourceMarkers = {};
+            
+            resources.forEach(resource => {
+                createResourceMarker(resource);
+                gameEntities[resource.id] = resource;
+            });
+        }
+        
+        // Create resource marker
+        function createResourceMarker(resource) {
+            const icon = getResourceIcon(resource.resource_type);
+            const color = resource.can_harvest ? '#4CAF50' : '#FFC107';
+            
+            const el = document.createElement('div');
+            el.className = 'resource-marker';
+            el.innerHTML = `
+                <div style="
+                    width: 28px;
+                    height: 28px;
+                    background-color: ${color};
+                    border: 2px solid #FFFFFF;
+                    border-radius: 6px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 12px;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                    cursor: pointer;
+                    transition: transform 0.2s ease;
+                    ${!resource.can_harvest ? 'opacity: 0.6;' : ''}
+                " 
+                onmouseover="this.style.transform='scale(1.2)'" 
+                onmouseout="this.style.transform='scale(1)'">
+                    ${icon}
+                </div>
+            `;
+            
+            el.addEventListener('click', function(e) {
+                e.stopPropagation();
+                // Left click directly harvests if close enough and ready
+                const distance = calculateDistance(
+                    currentPlayer.lat, currentPlayer.lon,
+                    resource.lat, resource.lon
+                );
+                
+                if (distance <= 50 && resource.can_harvest) {
+                    harvestResource(resource.id);
+                } else {
+                    showResourceInfo(resource);
+                }
+            });
+            
+            const marker = new mapboxgl.Marker(el)
+                .setLngLat([resource.lon, resource.lat])
+                .addTo(map);
+            
+            const popup = new mapboxgl.Popup({ offset: 25, closeButton: false })
+                .setHTML(`
+                    <div style="text-align: center; min-width: 120px;">
+                        <strong>${resource.resource_type.replace('_', ' ').toLowerCase()}</strong><br>
+                        <small>Level ${resource.level}</small><br>
+                        <small>Quantity: ${resource.quantity}</small><br>
+                        ${resource.can_harvest ? '<em style="color: #4CAF50">Ready</em>' : '<em style="color: #FFC107">Depleted</em>'}
+                    </div>
+                `);
+            
+            marker.setPopup(popup);
+            resourceMarkers[resource.id] = marker;
+        }
+        
+        // Find nearby entities functions for context menu
+        async function findNearbyFlags(coords, radius) {
+            return Object.values(gameEntities).filter(entity => 
+                entity.flag_type && 
+                calculateDistance(coords.lat, coords.lon, entity.lat, entity.lon) <= radius
+            );
+        }
+        
+        async function findNearbyNPCs(coords, radius) {
+            return Object.values(gameEntities).filter(entity => 
+                entity.npc_type && 
+                calculateDistance(coords.lat, coords.lon, entity.lat, entity.lon) <= radius
+            );
+        }
+        
+        async function findNearbyResources(coords, radius) {
+            return Object.values(gameEntities).filter(entity => 
+                entity.resource_type && 
+                calculateDistance(coords.lat, coords.lon, entity.lat, entity.lon) <= radius
+            );
+        }
+        
+        // Context menu actions
+        function moveToLocation(lat, lon) {
+            sendMoveCommand(lat, lon);
+        }
+        
+        function showFlagPlacementDialog(lat, lon) {
+            // Store coordinates for flag placement
+            window.flagPlacementCoords = { lat, lon };
+            
+            const flagName = prompt('Enter flag name:');
+            if (flagName) {
+                placeFlag(lat, lon, flagName, 'territory');
+            }
+        }
+        
+        function upgradeFlagAction(flagId) {
+            addChatMessage({
+                username: 'System',
+                message: 'Flag upgrades coming soon!'
+            });
+        }
+        
+        function jumpToFlag(flagId) {
+            const flag = gameEntities[flagId];
+            if (flag && flag.is_owned_by_player) {
+                addChatMessage({
+                    username: 'System',
+                    message: 'Teleporting to your flag...'
+                });
+                
+                // Animate to flag location
+                map.flyTo({
+                    center: [flag.lon, flag.lat],
+                    zoom: 18,
+                    essential: true
+                });
+                
+                // Move player there
+                sendMoveCommand(flag.lat, flag.lon);
+            }
+        }
+        
+        function attackFlagAction(flagId) {
+            attackFlag(flagId);
+        }
+        
+        function viewFlagInfo(flagId) {
+            const flag = gameEntities[flagId];
+            if (flag) {
+                showFlagInfo(flag);
+            }
+        }
+        
+        function attackNPC(npcId) {
+            fetch('/api/npcs/attack/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({ npc_id: npcId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const result = data.data;
+                    addChatMessage({
+                        username: 'System',
+                        message: result.message
+                    });
+                    
+                    if (result.victory) {
+                        currentPlayer.cash += result.money_gained || 0;
+                        currentPlayer.reputation += result.reputation_gained || 0;
+                        document.getElementById('cash').textContent = currentPlayer.cash.toLocaleString();
+                        document.getElementById('reputation').textContent = currentPlayer.reputation;
+                    }
+                    
+                    // Refresh NPCs
+                    loadNPCs();
+                } else {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Combat failed: ${data.error}`
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('NPC attack error:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: 'Failed to attack NPC. Check connection.'
+                });
+            });
+        }
+        
+        function harvestResource(resourceId) {
+            fetch('/api/resources/harvest/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({ resource_id: resourceId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const result = data.data;
+                    addChatMessage({
+                        username: 'System',
+                        message: result.message
+                    });
+                    
+                    if (result.resources_gained) {
+                        currentPlayer.cash += result.money_gained || 0;
+                        document.getElementById('cash').textContent = currentPlayer.cash.toLocaleString();
+                    }
+                    
+                    // Refresh resources
+                    loadResources();
+                } else {
+                    addChatMessage({
+                        username: 'System',
+                        message: `Harvest failed: ${data.error}`
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Resource harvest error:', error);
+                addChatMessage({
+                    username: 'System',
+                    message: 'Failed to harvest resource. Check connection.'
+                });
+            });
+        }
+        
+        function showNPCInfo(npc) {
+            const panel = document.getElementById('entity-info');
+            const content = document.getElementById('entity-info-content');
+            
+            const statusColor = npc.is_alive ? '#4CAF50' : '#757575';
+            
+            content.innerHTML = `
+                <h3 style="margin: 0 0 10px 0; color: #FF5722;">👤 ${npc.name}</h3>
+                <div><strong>Type:</strong> ${npc.npc_type.charAt(0).toUpperCase() + npc.npc_type.slice(1)}</div>
+                <div><strong>Level:</strong> ${npc.level}</div>
+                <div><strong>Status:</strong> <span style="color: ${statusColor}">${npc.is_alive ? 'Alive' : 'Dead'}</span></div>
+                <div><strong>HP:</strong> ${npc.current_hp}/${npc.max_hp}</div>
+                <div><strong>Attack:</strong> ${npc.attack_power}</div>
+                <div><strong>Defense:</strong> ${npc.defense_rating}</div>
+                <div><strong>Reward:</strong> $${npc.money_reward}</div>
+                <div><strong>Distance:</strong> ${Math.round(calculateDistance(currentPlayer.lat, currentPlayer.lon, npc.lat, npc.lon))}m</div>
+                <div style="margin-top: 15px;">
+                    ${npc.is_alive 
+                        ? '<button onclick="attackNPC(\'' + npc.id + '\'); hideEntityInfo();" style="padding: 8px 16px; background: #dc3545; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 5px;">Attack</button>' 
+                        : '<button disabled style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: not-allowed; margin-right: 5px;">Dead</button>'
+                    }
+                    <button onclick="hideEntityInfo()" style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: pointer;">Close</button>
+                </div>
+            `;
+            
+            panel.style.display = 'block';
+        }
+        
+        function showResourceInfo(resource) {
+            const panel = document.getElementById('entity-info');
+            const content = document.getElementById('entity-info-content');
+            
+            content.innerHTML = `
+                <h3 style="margin: 0 0 10px 0; color: #4CAF50;">${getResourceIcon(resource.resource_type)} ${resource.resource_type.replace('_', ' ').toLowerCase()}</h3>
+                <div><strong>Type:</strong> ${resource.resource_type.replace('_', ' ')}</div>
+                <div><strong>Level:</strong> ${resource.level}</div>
+                <div><strong>Quantity:</strong> ${resource.quantity}</div>
+                <div><strong>Status:</strong> ${resource.can_harvest ? 'Ready to harvest' : 'Depleted'}</div>
+                <div><strong>Respawn:</strong> ${resource.respawn_time} minutes</div>
+                <div><strong>Distance:</strong> ${Math.round(calculateDistance(currentPlayer.lat, currentPlayer.lon, resource.lat, resource.lon))}m</div>
+                <div style="margin-top: 15px;">
+                    ${resource.can_harvest 
+                        ? '<button onclick="harvestResource(\'' + resource.id + '\'); hideEntityInfo();" style="padding: 8px 16px; background: #28a745; border: none; border-radius: 4px; color: white; cursor: pointer; margin-right: 5px;">Harvest</button>' 
+                        : '<button disabled style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: not-allowed; margin-right: 5px;">Depleted</button>'
+                    }
+                    <button onclick="hideEntityInfo()" style="padding: 8px 16px; background: #6c757d; border: none; border-radius: 4px; color: white; cursor: pointer;">Close</button>
+                </div>
+            `;
+            
+            panel.style.display = 'block';
+        }
+        
+        function hideEntityInfo() {
+            document.getElementById('entity-info').style.display = 'none';
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('PMBeta initialized');
+            initMap(); // Start the game
+            
+            // Load all game entities after map loads
+            setTimeout(() => {
+                loadGameEntities();
+            }, 2000);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+{% extends 'pk/base.html' %}
+
+{% block title %}PMBeta - Parallel Kingdom Clone{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Hero Section -->
+            <div class="text-center py-5">
+                <h1 class="display-4 text-warning mb-4">
+                    <i class="fas fa-castle"></i> PMBeta
+                </h1>
+                <p class="lead text-muted mb-4">
+                    A Complete Parallel Kingdom Clone - Location-based MMORPG
+                </p>
+                
+                {% if not user.is_authenticated %}
+                <div class="mb-4">
+                    <a href="{% url 'pk_register' %}" class="btn pk-btn btn-lg me-3">
+                        <i class="fas fa-user-plus"></i> Create Account
+                    </a>
+                    <a href="{% url 'pk_login' %}" class="btn btn-outline-warning btn-lg">
+                        <i class="fas fa-sign-in-alt"></i> Login
+                    </a>
+                </div>
+                {% else %}
+                <div class="mb-4">
+                    <a href="{% url 'pk_game' %}" class="btn pk-btn btn-lg">
+                        <i class="fas fa-play"></i> Enter Game World
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Features Section -->
+            <div class="row mb-5">
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-map-marked-alt text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>GPS-Based World</h5>
+                        <p class="text-muted">
+                            Use your real-world location to explore and conquer territories in a persistent online world.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-hammer text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>Resource Gathering</h5>
+                        <p class="text-muted">
+                            Harvest trees, mine rocks, and gather resources to build your empire and upgrade your territories.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-sword text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>PvP Combat</h5>
+                        <p class="text-muted">
+                            Battle other players, siege territories, and build alliances in tactical turn-based combat.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-flag text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>Territory Control</h5>
+                        <p class="text-muted">
+                            Place flags, build outposts, and establish cities to generate resources and expand your influence.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-handshake text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>Trading System</h5>
+                        <p class="text-muted">
+                            Trade resources with other players, establish trade routes, and build economic alliances.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-md-4 mb-4">
+                    <div class="pk-card p-4 text-center h-100">
+                        <i class="fas fa-users text-warning mb-3" style="font-size: 3rem;"></i>
+                        <h5>Alliances</h5>
+                        <p class="text-muted">
+                            Form powerful alliances, coordinate attacks, and dominate the world with your guild members.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Game Stats -->
+            <div class="pk-card p-4 mb-5">
+                <h4 class="text-center mb-4">
+                    <i class="fas fa-chart-bar"></i> Game Statistics
+                </h4>
+                <div class="row text-center">
+                    <div class="col-md-3 mb-3">
+                        <div class="h3 text-warning" id="player-count">-</div>
+                        <div class="text-muted">Active Players</div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="h3 text-info" id="territory-count">-</div>
+                        <div class="text-muted">Territories</div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="h3 text-success" id="resource-count">-</div>
+                        <div class="text-muted">Resources</div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="h3 text-danger" id="combat-count">-</div>
+                        <div class="text-muted">Daily Battles</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- How to Play -->
+            <div class="pk-card p-4 mb-5">
+                <h4><i class="fas fa-question-circle"></i> How to Play</h4>
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-warning">1. Create Your Character</h6>
+                        <p class="text-muted mb-3">
+                            Sign up and create your character. You'll spawn at a random location with starting resources.
+                        </p>
+
+                        <h6 class="text-warning">2. Gather Resources</h6>
+                        <p class="text-muted mb-3">
+                            Find trees, rocks, and mines nearby. Harvest them for lumber, stone, and ore to build your empire.
+                        </p>
+
+                        <h6 class="text-warning">3. Build Territories</h6>
+                        <p class="text-muted mb-3">
+                            Place flags to claim territory. Upgrade to outposts and cities for better resource generation.
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-warning">4. Combat & Conquest</h6>
+                        <p class="text-muted mb-3">
+                            Attack other players and their territories. Successful battles yield resources and territory control.
+                        </p>
+
+                        <h6 class="text-warning">5. Trade & Diplomacy</h6>
+                        <p class="text-muted mb-3">
+                            Trade resources with other players. Form alliances to coordinate attacks and defenses.
+                        </p>
+
+                        <h6 class="text-warning">6. Expand Your Empire</h6>
+                        <p class="text-muted mb-3">
+                            Use your resources to claim more territory, upgrade your might, and dominate the world!
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load game statistics
+document.addEventListener('DOMContentLoaded', function() {
+    loadGameStats();
+});
+
+async function loadGameStats() {
+    try {
+        // These would be real API endpoints for game statistics
+        document.getElementById('player-count').textContent = Math.floor(Math.random() * 1000) + 500;
+        document.getElementById('territory-count').textContent = Math.floor(Math.random() * 5000) + 2000;
+        document.getElementById('resource-count').textContent = Math.floor(Math.random() * 10000) + 5000;
+        document.getElementById('combat-count').textContent = Math.floor(Math.random() * 200) + 150;
+    } catch (error) {
+        console.error('Failed to load game stats:', error);
+    }
+}
+</script>
+{% endblock %}

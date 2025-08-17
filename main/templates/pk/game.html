@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMBeta - Game World</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+
+        .game-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            padding: 10px 20px;
+            border-bottom: 2px solid rgba(255, 107, 53, 0.3);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .logo {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #ff6b35;
+        }
+
+        .player-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 5px 10px;
+            border-radius: 15px;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+            min-width: 60px;
+        }
+
+        .stat-icon {
+            font-size: 1.2em;
+        }
+
+        .logout-btn {
+            color: #e0e0e0;
+            text-decoration: none;
+            padding: 8px 15px;
+            border: 1px solid rgba(255, 107, 53, 0.3);
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255, 107, 53, 0.2);
+            border-color: #ff6b35;
+        }
+
+        /* Main Game Area */
+        .main-game {
+            flex: 1;
+            margin-top: 60px;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+        }
+
+        /* Map Area */
+        .map-container {
+            flex: 2;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 10px;
+            border: 2px solid rgba(255, 107, 53, 0.3);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .map-header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .map-title {
+            font-size: 1.3em;
+            color: #ff6b35;
+            font-weight: bold;
+        }
+
+        .map-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .map-btn {
+            padding: 8px 15px;
+            background: rgba(255, 107, 53, 0.2);
+            border: 1px solid rgba(255, 107, 53, 0.4);
+            border-radius: 5px;
+            color: #e0e0e0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .map-btn:hover {
+            background: rgba(255, 107, 53, 0.4);
+        }
+
+        #gameMap {
+            width: 100%;
+            height: 500px;
+            background: #2a2a2a;
+        }
+
+        /* Side Panel */
+        .side-panel {
+            flex: 1;
+            min-width: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel {
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 10px;
+            border: 2px solid rgba(255, 107, 53, 0.3);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+            font-weight: bold;
+            color: #ff6b35;
+        }
+
+        .panel-content {
+            padding: 20px;
+        }
+
+        /* Actions Panel */
+        .action-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .action-btn {
+            padding: 12px;
+            background: linear-gradient(135deg, #ff6b35, #f7931e);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn:hover {
+            background: linear-gradient(135deg, #f7931e, #ff6b35);
+            transform: translateY(-2px);
+        }
+
+        .action-btn:disabled {
+            background: #555555;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Status Panel */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .status-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 107, 53, 0.2);
+            text-align: center;
+        }
+
+        .status-label {
+            font-size: 0.9em;
+            color: #cccccc;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #ff6b35;
+        }
+
+        /* Nearby Items Panel */
+        .nearby-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .nearby-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid rgba(255, 107, 53, 0.1);
+            transition: background 0.3s ease;
+        }
+
+        .nearby-item:hover {
+            background: rgba(255, 107, 53, 0.1);
+        }
+
+        .nearby-info {
+            flex: 1;
+        }
+
+        .nearby-name {
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .nearby-details {
+            font-size: 0.9em;
+            color: #cccccc;
+        }
+
+        .nearby-btn {
+            padding: 5px 10px;
+            background: rgba(255, 107, 53, 0.3);
+            border: 1px solid rgba(255, 107, 53, 0.5);
+            border-radius: 4px;
+            color: white;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .nearby-btn:hover {
+            background: rgba(255, 107, 53, 0.5);
+        }
+
+        /* Messages */
+        .message {
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #ff6b35;
+            background: rgba(255, 107, 53, 0.1);
+        }
+
+        .message.success {
+            border-left-color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+            color: #4CAF50;
+        }
+
+        .message.error {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+            color: #f44336;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100px;
+            color: #cccccc;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .main-game {
+                flex-direction: column;
+            }
+            
+            .side-panel {
+                min-width: unset;
+            }
+            
+            .player-info {
+                gap: 10px;
+            }
+            
+            .stat-item {
+                min-width: 50px;
+                padding: 3px 8px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .main-game {
+                margin-top: 100px;
+                padding: 10px;
+            }
+            
+            .action-buttons {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">PMBeta</div>
+                <div class="player-info">
+                    <div class="stat-item">
+                        <span class="stat-icon">❤️</span>
+                        <span id="playerHealth">{{ player.health }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">⚡</span>
+                        <span id="playerEnergy">{{ player.energy }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">🍖</span>
+                        <span id="playerFood">{{ player.food }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">💰</span>
+                        <span id="playerGold">{{ player.gold }}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">🔢</span>
+                        <span>L{{ player.level }}</span>
+                    </div>
+                    <a href="{% url 'pk_logout' %}" class="logout-btn">Logout</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Game Area -->
+        <main class="main-game">
+            <!-- Map Container -->
+            <div class="map-container">
+                <div class="map-header">
+                    <div class="map-title">World Map</div>
+                    <div class="map-controls">
+                        <button class="map-btn" onclick="refreshMap()">🔄 Refresh</button>
+                        <button class="map-btn" onclick="centerOnPlayer()">📍 Center</button>
+                    </div>
+                </div>
+                <div id="gameMap">
+                    <div class="loading">Loading map...</div>
+                </div>
+            </div>
+
+            <!-- Side Panel -->
+            <aside class="side-panel">
+                <!-- Actions Panel -->
+                <div class="panel">
+                    <div class="panel-header">Actions</div>
+                    <div class="panel-content">
+                        <div class="action-buttons">
+                            <button class="action-btn" onclick="harvestNearby()">🌲 Harvest</button>
+                            <button class="action-btn" onclick="placeTerritory()">🏰 Place Flag</button>
+                            <button class="action-btn" onclick="attackNearby()">⚔️ Attack</button>
+                            <button class="action-btn" onclick="tradeWithNearby()">🤝 Trade</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Panel -->
+                <div class="panel">
+                    <div class="panel-header">Player Status</div>
+                    <div class="panel-content">
+                        <div class="status-grid">
+                            <div class="status-item">
+                                <div class="status-label">Might</div>
+                                <div class="status-value" id="playerMight">{{ player.might }}</div>
+                            </div>
+                            <div class="status-item">
+                                <div class="status-label">Defense</div>
+                                <div class="status-value" id="playerDefense">{{ player.defense }}</div>
+                            </div>
+                            <div class="status-item">
+                                <div class="status-label">Lumber</div>
+                                <div class="status-value" id="playerLumber">{{ player.lumber }}</div>
+                            </div>
+                            <div class="status-item">
+                                <div class="status-label">Stone</div>
+                                <div class="status-value" id="playerStone">{{ player.stone }}</div>
+                            </div>
+                            <div class="status-item">
+                                <div class="status-label">Ore</div>
+                                <div class="status-value" id="playerOre">{{ player.ore }}</div>
+                            </div>
+                            <div class="status-item">
+                                <div class="status-label">Position</div>
+                                <div class="status-value" id="playerPosition">{{ player.lat|floatformat:4 }}, {{ player.lon|floatformat:4 }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Nearby Items Panel -->
+                <div class="panel">
+                    <div class="panel-header">Nearby</div>
+                    <div class="panel-content">
+                        <div id="nearbyItems" class="nearby-list">
+                            <div class="loading">Loading nearby items...</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- Messages Container -->
+    <div id="messagesContainer"></div>
+
+    <script>
+        // Game state
+        let gameState = {
+            player: {
+                id: "{{ player.id }}",
+                username: "{{ player.user.username }}",
+                lat: {{ player.lat }},
+                lon: {{ player.lon }},
+                level: {{ player.level }},
+                health: {{ player.health }},
+                energy: {{ player.energy }},
+                food: {{ player.food }},
+                gold: {{ player.gold }},
+                lumber: {{ player.lumber }},
+                stone: {{ player.stone }},
+                ore: {{ player.ore }},
+                might: {{ player.might }},
+                defense: {{ player.defense }}
+            },
+            mapData: null,
+            selectedTarget: null
+        };
+
+        // API helpers
+        async function apiCall(url, method = 'GET', data = null) {
+            const options = {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            };
+
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const response = await fetch(url, options);
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showMessage(result.error || 'An error occurred', 'error');
+                }
+                
+                return result;
+            } catch (error) {
+                showMessage('Network error occurred', 'error');
+                console.error('API Error:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        // UI helpers
+        function showMessage(text, type = 'info') {
+            const container = document.getElementById('messagesContainer');
+            const message = document.createElement('div');
+            message.className = `message ${type}`;
+            message.textContent = text;
+            
+            container.appendChild(message);
+            
+            setTimeout(() => {
+                message.remove();
+            }, 5000);
+        }
+
+        function updatePlayerStats(stats) {
+            for (const [key, value] of Object.entries(stats)) {
+                const element = document.getElementById(`player${key.charAt(0).toUpperCase() + key.slice(1)}`);
+                if (element) {
+                    element.textContent = value;
+                    gameState.player[key] = value;
+                }
+            }
+        }
+
+        // Game functions
+        async function loadPlayerStatus() {
+            const result = await apiCall('/api/player/status/');
+            if (result.success) {
+                updatePlayerStats(result.player);
+            }
+        }
+
+        async function loadMapData() {
+            const result = await apiCall('/api/map/data/');
+            if (result.success) {
+                gameState.mapData = result.map_data;
+                updateNearbyItems();
+                // TODO: Update actual map display
+            }
+        }
+
+        function updateNearbyItems() {
+            const container = document.getElementById('nearbyItems');
+            if (!gameState.mapData) {
+                container.innerHTML = '<div class="loading">Loading nearby items...</div>';
+                return;
+            }
+
+            let html = '';
+            
+            // Add territories
+            gameState.mapData.territories.forEach(territory => {
+                html += `
+                    <div class="nearby-item" data-type="territory" data-id="${territory.id}">
+                        <div class="nearby-info">
+                            <div class="nearby-name">🏰 ${territory.name}</div>
+                            <div class="nearby-details">Level ${territory.level} ${territory.type} (${territory.distance}m)</div>
+                        </div>
+                        <button class="nearby-btn" onclick="interactWithTerritory('${territory.id}')">Interact</button>
+                    </div>
+                `;
+            });
+
+            // Add resources
+            gameState.mapData.resources.forEach(resource => {
+                html += `
+                    <div class="nearby-item" data-type="resource" data-id="${resource.id}">
+                        <div class="nearby-info">
+                            <div class="nearby-name">🌲 ${resource.type.charAt(0).toUpperCase() + resource.type.slice(1)}</div>
+                            <div class="nearby-details">Level ${resource.level} (${resource.distance}m)</div>
+                        </div>
+                        <button class="nearby-btn" onclick="harvestResource('${resource.id}')">Harvest</button>
+                    </div>
+                `;
+            });
+
+            // Add players
+            gameState.mapData.players.forEach(player => {
+                html += `
+                    <div class="nearby-item" data-type="player" data-id="${player.id}">
+                        <div class="nearby-info">
+                            <div class="nearby-name">👤 ${player.username}</div>
+                            <div class="nearby-details">Level ${player.level} (${player.distance}m)</div>
+                        </div>
+                        <button class="nearby-btn" onclick="interactWithPlayer('${player.id}')">Interact</button>
+                    </div>
+                `;
+            });
+
+            if (!html) {
+                html = '<div style="text-align: center; color: #888; padding: 20px;">No nearby items</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // Action functions
+        async function harvestResource(resourceId) {
+            const result = await apiCall('/api/resource/harvest/', 'POST', {
+                resource_id: resourceId
+            });
+
+            if (result.success) {
+                showMessage(`Harvested! Gained: ${JSON.stringify(result.yields)}`, 'success');
+                updatePlayerStats({
+                    energy: result.remaining_energy,
+                    lumber: gameState.player.lumber + result.yields.lumber,
+                    stone: gameState.player.stone + result.yields.stone,
+                    ore: gameState.player.ore + result.yields.ore,
+                    gold: gameState.player.gold + result.yields.gold,
+                    food: gameState.player.food + result.yields.food
+                });
+                loadMapData(); // Refresh map
+            }
+        }
+
+        async function placeTerritory() {
+            const name = prompt("Enter territory name:");
+            if (!name) return;
+
+            const result = await apiCall('/api/territory/place/', 'POST', {
+                name: name,
+                type: 'flag',
+                lat: gameState.player.lat,
+                lon: gameState.player.lon
+            });
+
+            if (result.success) {
+                showMessage(`Territory "${name}" placed successfully!`, 'success');
+                updatePlayerStats({
+                    lumber: gameState.player.lumber - result.cost.lumber,
+                    stone: gameState.player.stone - result.cost.stone,
+                    gold: gameState.player.gold - result.cost.gold
+                });
+                loadMapData(); // Refresh map
+            }
+        }
+
+        async function interactWithPlayer(playerId) {
+            gameState.selectedTarget = playerId;
+            const actions = ['Attack', 'Trade', 'Cancel'];
+            const action = prompt(`Choose action:\n1. Attack\n2. Trade\n3. Cancel\n\nEnter number:`);
+            
+            if (action === '1') {
+                await attackPlayer(playerId);
+            } else if (action === '2') {
+                showMessage('Trading system coming soon!', 'info');
+            }
+        }
+
+        async function attackPlayer(playerId) {
+            const result = await apiCall('/api/combat/attack/', 'POST', {
+                target_player_id: playerId
+            });
+
+            if (result.success) {
+                const message = result.victory ? 
+                    `Victory! ${result.message}` : 
+                    `Defeat! ${result.message}`;
+                showMessage(message, result.victory ? 'success' : 'error');
+                
+                updatePlayerStats({
+                    energy: result.remaining_energy
+                });
+                loadPlayerStatus(); // Refresh all stats
+            }
+        }
+
+        function harvestNearby() {
+            const resources = document.querySelectorAll('[data-type="resource"]');
+            if (resources.length > 0) {
+                const resourceId = resources[0].dataset.id;
+                harvestResource(resourceId);
+            } else {
+                showMessage('No resources nearby to harvest', 'error');
+            }
+        }
+
+        function attackNearby() {
+            const players = document.querySelectorAll('[data-type="player"]');
+            if (players.length > 0) {
+                const playerId = players[0].dataset.id;
+                attackPlayer(playerId);
+            } else {
+                showMessage('No players nearby to attack', 'error');
+            }
+        }
+
+        function tradeWithNearby() {
+            showMessage('Trading system coming soon!', 'info');
+        }
+
+        function refreshMap() {
+            loadMapData();
+            loadPlayerStatus();
+        }
+
+        function centerOnPlayer() {
+            showMessage(`Centered on player at ${gameState.player.lat.toFixed(4)}, ${gameState.player.lon.toFixed(4)}`, 'info');
+        }
+
+        function interactWithTerritory(territoryId) {
+            showMessage('Territory interaction coming soon!', 'info');
+        }
+
+        // Initialize game
+        document.addEventListener('DOMContentLoaded', function() {
+            loadPlayerStatus();
+            loadMapData();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadPlayerStatus();
+                loadMapData();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
