@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Location RPG - {{ character.name }}</title>
+    
+    <!-- Mapbox GL JS -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        /* Main Game Container */
+        .game-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Top HUD */
+        .game-hud {
+            height: 60px;
+            background: linear-gradient(135deg, #2c3e50, #3498db);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+        
+        .character-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .character-name {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #ecf0f1;
+        }
+        
+        .stat-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            font-weight: 500;
+            min-width: 30px;
+        }
+        
+        .bar {
+            width: 100px;
+            height: 12px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        
+        .bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+        
+        .hp-bar { background: #e74c3c; }
+        .mana-bar { background: #3498db; }
+        .stamina-bar { background: #f39c12; }
+        
+        .level-gold {
+            margin-left: auto;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .level-display {
+            background: rgba(0,0,0,0.2);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        .gold-display {
+            background: #f39c12;
+            color: #fff;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        /* Main Game Area */
+        .game-main {
+            flex: 1;
+            display: flex;
+            position: relative;
+        }
+        
+        /* Mapbox Container */
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+        
+        /* Side Panel */
+        .side-panel {
+            width: 300px;
+            background: rgba(44, 62, 80, 0.95);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            flex-direction: column;
+            z-index: 500;
+        }
+        
+        .panel-tabs {
+            display: flex;
+            background: rgba(0,0,0,0.2);
+        }
+        
+        .tab-button {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            color: #bdc3c7;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        
+        .tab-button.active {
+            background: #3498db;
+            color: #fff;
+        }
+        
+        .tab-button:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .panel-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .tab-panel {
+            display: none;
+        }
+        
+        .tab-panel.active {
+            display: block;
+        }
+        
+        /* Inventory Styles */
+        .inventory-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .inventory-slot {
+            aspect-ratio: 1;
+            background: rgba(0,0,0,0.3);
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .inventory-slot:hover {
+            border-color: #3498db;
+            transform: translateY(-2px);
+        }
+        
+        .inventory-slot.equipped {
+            border-color: #f39c12;
+            background: rgba(243, 156, 18, 0.2);
+        }
+        
+        .item-icon {
+            width: 32px;
+            height: 32px;
+            background: #95a5a6;
+            border-radius: 4px;
+        }
+        
+        .item-quantity {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            background: #e74c3c;
+            color: #fff;
+            font-size: 10px;
+            padding: 1px 4px;
+            border-radius: 2px;
+        }
+        
+        /* Character Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-item {
+            background: rgba(0,0,0,0.2);
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #3498db;
+        }
+        
+        .stat-name {
+            font-size: 0.9rem;
+            color: #bdc3c7;
+            margin-top: 4px;
+        }
+        
+        /* Nearby Players */
+        .nearby-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .nearby-player {
+            background: rgba(0,0,0,0.2);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .player-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .player-name {
+            font-weight: bold;
+            color: #ecf0f1;
+        }
+        
+        .player-level {
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+        
+        .player-distance {
+            font-size: 0.8rem;
+            color: #3498db;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-combat {
+            background: #e74c3c;
+            color: #fff;
+        }
+        
+        .btn-trade {
+            background: #f39c12;
+            color: #fff;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        /* Combat Modal */
+        .combat-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        .combat-container {
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .combat-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #e74c3c;
+        }
+        
+        .combat-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+        }
+        
+        .combatant {
+            flex: 1;
+            padding: 0 20px;
+        }
+        
+        .combatant-name {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .vs-separator {
+            align-self: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        
+        .combat-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        
+        .btn-large {
+            padding: 12px 24px;
+            font-size: 1rem;
+            border-radius: 8px;
+        }
+        
+        .btn-attack {
+            background: #e74c3c;
+            color: #fff;
+        }
+        
+        .btn-defend {
+            background: #95a5a6;
+            color: #fff;
+        }
+        
+        .btn-flee {
+            background: #7f8c8d;
+            color: #fff;
+        }
+        
+        /* Messages */
+        .message-area {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            max-width: 300px;
+            z-index: 1500;
+        }
+        
+        .message {
+            background: rgba(52, 152, 219, 0.9);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .message.error {
+            background: rgba(231, 76, 60, 0.9);
+        }
+        
+        .message.success {
+            background: rgba(46, 204, 113, 0.9);
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        /* Loading Screen */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #1a1a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 3000;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .side-panel {
+                position: absolute;
+                right: -300px;
+                top: 0;
+                height: 100%;
+                transition: right 0.3s ease;
+                z-index: 1000;
+            }
+            
+            .side-panel.open {
+                right: 0;
+            }
+            
+            .mobile-menu-toggle {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: #3498db;
+                color: #fff;
+                border: none;
+                padding: 10px;
+                border-radius: 5px;
+                cursor: pointer;
+                z-index: 1100;
+            }
+            
+            .character-info {
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            
+            .stat-bar {
+                min-width: 120px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-screen" id="loadingScreen">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <div class="game-container">
+        <!-- Top HUD -->
+        <div class="game-hud">
+            <div class="character-info">
+                <div class="character-name">{{ character.name }}</div>
+                
+                <div class="stat-bar">
+                    <span class="stat-label">HP</span>
+                    <div class="bar">
+                        <div class="bar-fill hp-bar" style="width: {{ character.current_hp|floatformat:0 }}%"></div>
+                    </div>
+                    <span>{{ character.current_hp }}/{{ character.max_hp }}</span>
+                </div>
+                
+                <div class="stat-bar">
+                    <span class="stat-label">MP</span>
+                    <div class="bar">
+                        <div class="bar-fill mana-bar" style="width: {{ character.current_mana|floatformat:0 }}%"></div>
+                    </div>
+                    <span>{{ character.current_mana }}/{{ character.max_mana }}</span>
+                </div>
+                
+                <div class="stat-bar">
+                    <span class="stat-label">ST</span>
+                    <div class="bar">
+                        <div class="bar-fill stamina-bar" style="width: {{ character.current_stamina|floatformat:0 }}%"></div>
+                    </div>
+                    <span>{{ character.current_stamina }}/{{ character.max_stamina }}</span>
+                </div>
+            </div>
+            
+            <div class="level-gold">
+                <div class="level-display">Level {{ character.level }}</div>
+                <div class="gold-display">{{ character.gold|floatformat:0 }}g</div>
+            </div>
+        </div>
+
+        <!-- Main Game Area -->
+        <div class="game-main">
+            <!-- Mapbox Map -->
+            <div id="map"></div>
+            
+            <!-- Mobile Menu Toggle -->
+            <button class="mobile-menu-toggle" onclick="toggleSidePanel()" style="display: none;">☰</button>
+            
+            <!-- Side Panel -->
+            <div class="side-panel" id="sidePanel">
+                <div class="panel-tabs">
+                    <button class="tab-button active" onclick="showTab('inventory')">Inventory</button>
+                    <button class="tab-button" onclick="showTab('character')">Character</button>
+                    <button class="tab-button" onclick="showTab('nearby')">Players</button>
+                </div>
+                
+                <div class="panel-content">
+                    <!-- Inventory Tab -->
+                    <div id="inventory-tab" class="tab-panel active">
+                        <h3>Inventory</h3>
+                        <div class="inventory-grid" id="inventoryGrid">
+                            <!-- Inventory slots will be populated by JavaScript -->
+                        </div>
+                        
+                        <h4>Equipment</h4>
+                        <div class="inventory-grid">
+                            <div class="inventory-slot" data-slot="weapon">
+                                <div class="item-icon"></div>
+                            </div>
+                            <div class="inventory-slot" data-slot="armor">
+                                <div class="item-icon"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Character Tab -->
+                    <div id="character-tab" class="tab-panel">
+                        <h3>Character Stats</h3>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.strength }}</div>
+                                <div class="stat-name">Strength</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.defense }}</div>
+                                <div class="stat-name">Defense</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.vitality }}</div>
+                                <div class="stat-name">Vitality</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.agility }}</div>
+                                <div class="stat-name">Agility</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.intelligence }}</div>
+                                <div class="stat-name">Intelligence</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">{{ character.experience }}</div>
+                                <div class="stat-name">Experience</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Nearby Players Tab -->
+                    <div id="nearby-tab" class="tab-panel">
+                        <h3>Nearby Players</h3>
+                        <div class="nearby-list" id="nearbyPlayersList">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Combat Modal -->
+    <div class="combat-modal" id="combatModal">
+        <div class="combat-container">
+            <div class="combat-title">Combat!</div>
+            <div class="combat-stats">
+                <div class="combatant">
+                    <div class="combatant-name" id="playerName">{{ character.name }}</div>
+                    <div class="bar">
+                        <div class="bar-fill hp-bar" id="playerHpBar"></div>
+                    </div>
+                    <div id="playerHp"></div>
+                </div>
+                <div class="vs-separator">VS</div>
+                <div class="combatant">
+                    <div class="combatant-name" id="enemyName"></div>
+                    <div class="bar">
+                        <div class="bar-fill hp-bar" id="enemyHpBar"></div>
+                    </div>
+                    <div id="enemyHp"></div>
+                </div>
+            </div>
+            <div class="combat-actions">
+                <button class="btn btn-large btn-attack" onclick="combatAction('attack')">Attack</button>
+                <button class="btn btn-large btn-defend" onclick="combatAction('defend')">Defend</button>
+                <button class="btn btn-large btn-flee" onclick="combatAction('flee')">Flee</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Message Area -->
+    <div class="message-area" id="messageArea"></div>
+
+    <script>
+        // Game State
+        let gameState = {
+            character: {
+                name: '{{ character.name }}',
+                level: {{ character.level }},
+                lat: {{ character.lat }},
+                lon: {{ character.lon }},
+                current_hp: {{ character.current_hp }},
+                max_hp: {{ character.max_hp }},
+                current_mana: {{ character.current_mana }},
+                max_mana: {{ character.max_mana }},
+                current_stamina: {{ character.current_stamina }},
+                max_stamina: {{ character.max_stamina }},
+                gold: {{ character.gold }},
+                strength: {{ character.strength }},
+                defense: {{ character.defense }},
+                vitality: {{ character.vitality }},
+                agility: {{ character.agility }},
+                intelligence: {{ character.intelligence }}
+            },
+            map: null,
+            websocket: null,
+            nearbyPlayers: [],
+            monsters: [],
+            activeCombat: null
+        };
+
+        // Initialize Mapbox
+        mapboxgl.accessToken = '{{ game_settings.MAPBOX_ACCESS_TOKEN }}';
+
+        function initializeMap() {
+            gameState.map = new mapboxgl.Map({
+                container: 'map',
+                style: '{{ game_settings.MAPBOX_STYLE }}',
+                center: [gameState.character.lon, gameState.character.lat],
+                zoom: 15, // Fixed zoom level
+                pitch: 0,
+                bearing: 0,
+                interactive: false // Disable all interactions (no panning, zooming, rotation)
+            });
+
+            gameState.map.on('load', function() {
+                // Add player marker
+                addPlayerMarker();
+                
+                // Load initial game data
+                loadGameData();
+                
+                // Hide loading screen
+                document.getElementById('loadingScreen').style.display = 'none';
+                
+                // Initialize WebSocket
+                initializeWebSocket();
+                
+                // Start game loop
+                startGameLoop();
+            });
+        }
+
+        function addPlayerMarker() {
+            // Add player location marker
+            const playerMarker = new mapboxgl.Marker({
+                color: '#3498db',
+                scale: 1.2
+            })
+            .setLngLat([gameState.character.lon, gameState.character.lat])
+            .addTo(gameState.map);
+        }
+
+        function loadGameData() {
+            // Load nearby players
+            fetchNearbyPlayers();
+            
+            // Load monsters
+            fetchNearbyMonsters();
+            
+            // Load inventory
+            loadInventory();
+        }
+
+        function fetchNearbyPlayers() {
+            fetch('/api/rpg/nearby-players/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateNearbyPlayers(data.players);
+                    }
+                })
+                .catch(error => console.error('Error fetching nearby players:', error));
+        }
+
+        function fetchNearbyMonsters() {
+            fetch('/api/rpg/nearby-monsters/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateMonsters(data.monsters);
+                    }
+                })
+                .catch(error => console.error('Error fetching monsters:', error));
+        }
+
+        function updateNearbyPlayers(players) {
+            gameState.nearbyPlayers = players;
+            
+            // Update UI
+            const nearbyList = document.getElementById('nearbyPlayersList');
+            nearbyList.innerHTML = '';
+            
+            if (players.length === 0) {
+                nearbyList.innerHTML = '<p style="color: #95a5a6; text-align: center;">No players nearby</p>';
+                return;
+            }
+            
+            players.forEach(player => {
+                const playerElement = document.createElement('div');
+                playerElement.className = 'nearby-player';
+                playerElement.innerHTML = `
+                    <div class="player-info">
+                        <div class="player-name">${player.name}</div>
+                        <div class="player-level">Level ${player.level}</div>
+                    </div>
+                    <div class="player-distance">${Math.round(player.distance)}m</div>
+                    <div class="action-buttons">
+                        <button class="btn btn-combat" onclick="challengePlayer('${player.id}')">Fight</button>
+                        <button class="btn btn-trade" onclick="tradeWithPlayer('${player.id}')">Trade</button>
+                    </div>
+                `;
+                nearbyList.appendChild(playerElement);
+            });
+            
+            // Add markers to map
+            players.forEach(player => {
+                new mapboxgl.Marker({ color: '#e74c3c', scale: 0.8 })
+                    .setLngLat([player.lon, player.lat])
+                    .setPopup(new mapboxgl.Popup().setHTML(`
+                        <strong>${player.name}</strong><br>
+                        Level ${player.level}<br>
+                        ${Math.round(player.distance)}m away
+                    `))
+                    .addTo(gameState.map);
+            });
+        }
+
+        function updateMonsters(monsters) {
+            gameState.monsters = monsters;
+            
+            // Add monster markers to map
+            monsters.forEach(monster => {
+                const color = monster.is_aggressive ? '#8b0000' : '#ff6b6b';
+                
+                const marker = new mapboxgl.Marker({ color: color, scale: 0.9 })
+                    .setLngLat([monster.lon, monster.lat])
+                    .setPopup(new mapboxgl.Popup().setHTML(`
+                        <strong>${monster.name}</strong><br>
+                        Level ${monster.level}<br>
+                        HP: ${monster.current_hp}/${monster.max_hp}<br>
+                        ${Math.round(monster.distance)}m away
+                    `))
+                    .addTo(gameState.map);
+                
+                // Add click event for combat
+                marker.getElement().addEventListener('click', () => {
+                    if (monster.distance <= 50) { // 50m range for combat
+                        startPvECombat(monster.id);
+                    } else {
+                        showMessage('Too far away to attack!', 'error');
+                    }
+                });
+            });
+        }
+
+        function loadInventory() {
+            fetch('/api/rpg/inventory/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateInventoryUI(data.inventory);
+                    }
+                })
+                .catch(error => console.error('Error loading inventory:', error));
+        }
+
+        function updateInventoryUI(inventory) {
+            const inventoryGrid = document.getElementById('inventoryGrid');
+            inventoryGrid.innerHTML = '';
+            
+            // Create 20 inventory slots
+            for (let i = 0; i < 20; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'inventory-slot';
+                
+                const item = inventory.find(inv => inv.slot === i);
+                if (item) {
+                    slot.innerHTML = `
+                        <div class="item-icon"></div>
+                        <div class="item-quantity">${item.quantity}</div>
+                    `;
+                    slot.title = `${item.item.name}\n${item.item.description}`;
+                    
+                    if (item.is_equipped) {
+                        slot.classList.add('equipped');
+                    }
+                }
+                
+                inventoryGrid.appendChild(slot);
+            }
+        }
+
+        // WebSocket Connection
+        function initializeWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/rpg/game/`;
+            
+            gameState.websocket = new WebSocket(wsUrl);
+            
+            gameState.websocket.onopen = function() {
+                console.log('WebSocket connected');
+                showMessage('Connected to game server!', 'success');
+            };
+            
+            gameState.websocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            gameState.websocket.onclose = function() {
+                console.log('WebSocket disconnected');
+                showMessage('Disconnected from server. Reconnecting...', 'error');
+                
+                // Reconnect after 3 seconds
+                setTimeout(initializeWebSocket, 3000);
+            };
+        }
+
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'player_update':
+                    updateCharacterStats(data.character);
+                    break;
+                case 'nearby_players':
+                    updateNearbyPlayers(data.players);
+                    break;
+                case 'combat_start':
+                    startCombatUI(data.combat);
+                    break;
+                case 'combat_update':
+                    updateCombatUI(data.combat);
+                    break;
+                case 'combat_end':
+                    endCombatUI(data.result);
+                    break;
+                case 'level_up':
+                    showMessage(`Level up! You are now level ${data.level}!`, 'success');
+                    updateCharacterStats(data.character);
+                    break;
+                case 'trade_request':
+                    handleTradeRequest(data.trade);
+                    break;
+            }
+        }
+
+        // Combat System
+        function startPvECombat(monsterId) {
+            fetch('/api/rpg/combat/pve/start/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ monster_id: monsterId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    gameState.activeCombat = data.combat;
+                    showCombatModal(data.combat);
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error starting combat:', error);
+                showMessage('Failed to start combat', 'error');
+            });
+        }
+
+        function combatAction(action) {
+            if (!gameState.activeCombat) return;
+            
+            fetch('/api/rpg/combat/action/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ 
+                    combat_id: gameState.activeCombat.id, 
+                    action: action 
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.combat_ended) {
+                        hideCombatModal();
+                        showMessage(data.message, data.victory ? 'success' : 'error');
+                        gameState.activeCombat = null;
+                        
+                        // Update character stats
+                        updateCharacterStats(data.character);
+                        
+                        // Refresh game data
+                        loadGameData();
+                    } else {
+                        updateCombatUI(data.combat);
+                    }
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error performing combat action:', error);
+                showMessage('Combat action failed', 'error');
+            });
+        }
+
+        function showCombatModal(combat) {
+            const modal = document.getElementById('combatModal');
+            modal.style.display = 'flex';
+            updateCombatUI(combat);
+        }
+
+        function hideCombatModal() {
+            const modal = document.getElementById('combatModal');
+            modal.style.display = 'none';
+        }
+
+        function updateCombatUI(combat) {
+            document.getElementById('enemyName').textContent = combat.enemy.name;
+            document.getElementById('playerHp').textContent = `${combat.player_hp}/${gameState.character.max_hp}`;
+            document.getElementById('enemyHp').textContent = `${combat.enemy_hp}/${combat.enemy.max_hp}`;
+            
+            const playerHpPercent = (combat.player_hp / gameState.character.max_hp) * 100;
+            const enemyHpPercent = (combat.enemy_hp / combat.enemy.max_hp) * 100;
+            
+            document.getElementById('playerHpBar').style.width = playerHpPercent + '%';
+            document.getElementById('enemyHpBar').style.width = enemyHpPercent + '%';
+        }
+
+        // Trading System
+        function tradeWithPlayer(playerId) {
+            // Implement trading UI
+            showMessage('Trading system coming soon!', 'info');
+        }
+
+        // PvP System
+        function challengePlayer(playerId) {
+            fetch('/api/rpg/pvp/challenge/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ player_id: playerId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage('Challenge sent!', 'success');
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error sending challenge:', error);
+                showMessage('Failed to send challenge', 'error');
+            });
+        }
+
+        // UI Functions
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-panel').forEach(panel => {
+                panel.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function toggleSidePanel() {
+            const panel = document.getElementById('sidePanel');
+            panel.classList.toggle('open');
+        }
+
+        function showMessage(text, type = 'info') {
+            const messageArea = document.getElementById('messageArea');
+            const message = document.createElement('div');
+            message.className = `message ${type}`;
+            message.textContent = text;
+            
+            messageArea.appendChild(message);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                message.remove();
+            }, 5000);
+        }
+
+        function updateCharacterStats(character) {
+            // Update character object
+            Object.assign(gameState.character, character);
+            
+            // Update UI elements
+            const hpBar = document.querySelector('.hp-bar');
+            const manaBar = document.querySelector('.mana-bar');
+            const staminaBar = document.querySelector('.stamina-bar');
+            
+            hpBar.style.width = (character.current_hp / character.max_hp * 100) + '%';
+            manaBar.style.width = (character.current_mana / character.max_mana * 100) + '%';
+            staminaBar.style.width = (character.current_stamina / character.max_stamina * 100) + '%';
+            
+            // Update text displays
+            document.querySelector('.level-display').textContent = `Level ${character.level}`;
+            document.querySelector('.gold-display').textContent = `${character.gold}g`;
+        }
+
+        function startGameLoop() {
+            // Update game state every 5 seconds
+            setInterval(() => {
+                fetchNearbyPlayers();
+                fetchNearbyMonsters();
+            }, 5000);
+        }
+
+        // Mobile responsiveness
+        function checkMobile() {
+            const mobileToggle = document.querySelector('.mobile-menu-toggle');
+            if (window.innerWidth <= 768) {
+                mobileToggle.style.display = 'block';
+            } else {
+                mobileToggle.style.display = 'none';
+                document.getElementById('sidePanel').classList.remove('open');
+            }
+        }
+
+        // Initialize everything when page loads
+        window.addEventListener('load', function() {
+            initializeMap();
+            checkMobile();
+        });
+
+        window.addEventListener('resize', checkMobile);
+        
+        // Add CSRF token to all requests
+        document.addEventListener('DOMContentLoaded', function() {
+            const csrfToken = '{{ csrf_token }}';
+            const meta = document.createElement('meta');
+            meta.name = 'csrf-token';
+            meta.content = csrfToken;
+            document.getElementsByTagName('head')[0].appendChild(meta);
+            
+            // Also add as hidden input for forms
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'csrfmiddlewaretoken';
+            input.value = csrfToken;
+            document.body.appendChild(input);
+        });
+    </script>
+</body>
+</html>

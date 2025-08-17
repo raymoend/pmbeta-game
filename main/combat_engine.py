@@ -1,17 +1,153 @@
 """
-PMBeta Combat Engine
-Advanced turn-based PvE combat system for Player vs NPC battles
+Advanced Combat Engine for RPG System
+Handles detailed combat mechanics, status effects, and combat calculations
 """
 import random
 import math
+from enum import Enum
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
-from .models import Player, NPC, CombatSession, CombatAction
+
+
+class DamageType(Enum):
+    PHYSICAL = "physical"
+    MAGICAL = "magical"
+    FIRE = "fire"
+    ICE = "ice"
+    LIGHTNING = "lightning"
+    POISON = "poison"
+
+
+class StatusEffect(Enum):
+    POISONED = "poisoned"
+    BURNING = "burning"
+    FROZEN = "frozen"
+    STUNNED = "stunned"
+    BLEEDING = "bleeding"
+    BLESSED = "blessed"
+    CURSED = "cursed"
+    REGENERATING = "regenerating"
+
+
+class CombatAction(Enum):
+    ATTACK = "attack"
+    DEFEND = "defend"
+    FLEE = "flee"
+    USE_SKILL = "use_skill"
+    USE_ITEM = "use_item"
+
+
+@dataclass
+class CombatEffect:
+    """Represents a status effect in combat"""
+    effect_type: StatusEffect
+    duration: int  # rounds
+    power: float
+    source: str
+    applied_at: datetime = field(default_factory=timezone.now)
+    
+    def is_expired(self) -> bool:
+        return self.duration <= 0
+    
+    def tick(self) -> Dict[str, Any]:
+        """Process one round of the effect"""
+        self.duration -= 1
+        result = {"effect": self.effect_type.value, "expired": self.is_expired()}
+        
+        if self.effect_type == StatusEffect.POISONED:
+            damage = int(self.power)
+            result["damage"] = damage
+            result["message"] = f"Poison deals {damage} damage"
+        
+        elif self.effect_type == StatusEffect.BURNING:
+            damage = int(self.power * 1.2)
+            result["damage"] = damage
+            result["message"] = f"Fire burns for {damage} damage"
+        
+        elif self.effect_type == StatusEffect.BLEEDING:
+            damage = int(self.power * 0.8)
+            result["damage"] = damage
+            result["message"] = f"Bleeding causes {damage} damage"
+        
+        elif self.effect_type == StatusEffect.REGENERATING:
+            healing = int(self.power)
+            result["healing"] = healing
+            result["message"] = f"Regeneration heals {healing} HP"
+        
+        return result
+
+
+@dataclass
+class CombatStats:
+    """Enhanced combat statistics"""
+    health: int
+    max_health: int
+    mana: int
+    max_mana: int
+    attack_power: int
+    defense: int
+    accuracy: int
+    evasion: int
+    critical_chance: float
+    critical_multiplier: float = 1.5
+    status_effects: List[CombatEffect] = field(default_factory=list)
+    
+    def apply_effect(self, effect: CombatEffect) -> bool:
+        """Apply a status effect"""
+        # Check if effect already exists
+        for existing in self.status_effects:
+            if existing.effect_type == effect.effect_type:
+                # Refresh duration if new effect is stronger
+                if effect.power >= existing.power:
+                    existing.duration = max(existing.duration, effect.duration)
+                    existing.power = effect.power
+                return True
+        
+        self.status_effects.append(effect)
+        return True
+    
+    def remove_effect(self, effect_type: StatusEffect) -> bool:
+        """Remove a specific status effect"""
+        for effect in self.status_effects[:]:
+            if effect.effect_type == effect_type:
+                self.status_effects.remove(effect)
+                return True
+        return False
+    
+    def has_effect(self, effect_type: StatusEffect) -> bool:
+        """Check if character has a specific status effect"""
+        return any(effect.effect_type == effect_type for effect in self.status_effects)
+    
+    def process_effects(self) -> List[Dict[str, Any]]:
+        """Process all status effects for one round"""
+        results = []
+        effects_to_remove = []
+        
+        for effect in self.status_effects:
+            result = effect.tick()
+            results.append(result)
+            
+            # Apply effect results
+            if "damage" in result:
+                self.health = max(0, self.health - result["damage"])
+            elif "healing" in result:
+                self.health = min(self.max_health, self.health + result["healing"])
+            
+            if effect.is_expired():
+                effects_to_remove.append(effect)
+        
+        # Remove expired effects
+        for effect in effects_to_remove:
+            self.status_effects.remove(effect)
+        
+        return results
 
 
 class CombatEngine:
-    """Main combat engine for managing PvE battles"""
+    """Advanced combat calculation engine"""
     
     def __init__(self, combat_session=None):
         self.session_timeout = 600  # 10 minutes

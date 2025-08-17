@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Your Character - Location RPG</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #4a6741 50%, #2c3e50 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ecf0f1;
+        }
+        
+        .creation-container {
+            background: rgba(44, 62, 80, 0.95);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .game-title {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #3498db;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #bdc3c7;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+            text-align: left;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #ecf0f1;
+            font-size: 1.1rem;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.1);
+            color: #ecf0f1;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #3498db;
+            background: rgba(255,255,255,0.15);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+        }
+        
+        input[type="text"]::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+        
+        .character-info {
+            background: rgba(0,0,0,0.2);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            text-align: left;
+        }
+        
+        .character-info h3 {
+            color: #3498db;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+        
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .stat-item {
+            background: rgba(255,255,255,0.05);
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #e67e22;
+        }
+        
+        .stat-name {
+            font-size: 0.9rem;
+            color: #bdc3c7;
+            margin-top: 3px;
+        }
+        
+        .starting-info {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .starting-info li {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .starting-info li:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            color: #bdc3c7;
+        }
+        
+        .info-value {
+            color: #f39c12;
+            font-weight: bold;
+        }
+        
+        .create-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(45deg, #3498db, #2980b9);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        
+        .create-btn:hover {
+            background: linear-gradient(45deg, #2980b9, #3498db);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(52, 152, 219, 0.4);
+        }
+        
+        .create-btn:active {
+            transform: translateY(0);
+        }
+        
+        .back-link {
+            display: inline-block;
+            color: #95a5a6;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.3s ease;
+        }
+        
+        .back-link:hover {
+            color: #ecf0f1;
+        }
+        
+        .messages {
+            margin-bottom: 20px;
+        }
+        
+        .message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .message.error {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+        }
+        
+        .message.success {
+            background: rgba(46, 204, 113, 0.2);
+            border: 1px solid #2ecc71;
+            color: #2ecc71;
+        }
+        
+        .feature-highlight {
+            background: rgba(52, 152, 219, 0.1);
+            border: 1px solid rgba(52, 152, 219, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+        }
+        
+        .feature-highlight h4 {
+            color: #3498db;
+            margin-bottom: 8px;
+        }
+        
+        .feature-highlight p {
+            color: #bdc3c7;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+        
+        @media (max-width: 600px) {
+            .creation-container {
+                padding: 30px 20px;
+            }
+            
+            .game-title {
+                font-size: 2rem;
+            }
+            
+            .stat-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="creation-container">
+        <div class="game-title">Location RPG</div>
+        <div class="subtitle">Create Your Character</div>
+        
+        {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                    <div class="message {{ message.tags }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        
+        <div class="feature-highlight">
+            <h4>🌍 Real-World Adventure</h4>
+            <p>Explore the real world as your game map. Fight monsters, find treasure, and battle other players based on your actual GPS location!</p>
+        </div>
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="character_name">Character Name</label>
+                <input type="text" 
+                       id="character_name" 
+                       name="character_name" 
+                       placeholder="Enter your character's name" 
+                       required 
+                       maxlength="50"
+                       pattern="[A-Za-z0-9_\-\s]+"
+                       title="Letters, numbers, spaces, hyphens and underscores only">
+            </div>
+            
+            <div class="character-info">
+                <h3>Starting Character Stats</h3>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">10</div>
+                        <div class="stat-name">Strength</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">10</div>
+                        <div class="stat-name">Defense</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">10</div>
+                        <div class="stat-name">Vitality</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">10</div>
+                        <div class="stat-name">Agility</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">10</div>
+                        <div class="stat-name">Intelligence</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">1</div>
+                        <div class="stat-name">Level</div>
+                    </div>
+                </div>
+                
+                <ul class="starting-info">
+                    <li>
+                        <span class="info-label">Health Points:</span>
+                        <span class="info-value">100 HP</span>
+                    </li>
+                    <li>
+                        <span class="info-label">Mana Points:</span>
+                        <span class="info-value">50 MP</span>
+                    </li>
+                    <li>
+                        <span class="info-label">Stamina:</span>
+                        <span class="info-value">100 ST</span>
+                    </li>
+                    <li>
+                        <span class="info-label">Starting Gold:</span>
+                        <span class="info-value">1,000g</span>
+                    </li>
+                    <li>
+                        <span class="info-label">Starting Skills:</span>
+                        <span class="info-value">Combat & Gathering</span>
+                    </li>
+                </ul>
+            </div>
+            
+            <button type="submit" class="create-btn">Create Character & Start Adventure!</button>
+        </form>
+        
+        <a href="{% url 'index' %}" class="back-link">← Back to Home</a>
+    </div>
+
+    <script>
+        // Auto-focus on character name input
+        document.getElementById('character_name').focus();
+        
+        // Character name validation
+        const nameInput = document.getElementById('character_name');
+        nameInput.addEventListener('input', function() {
+            // Remove invalid characters as user types
+            this.value = this.value.replace(/[^A-Za-z0-9_\-\s]/g, '');
+        });
+        
+        // Form submission enhancement
+        document.querySelector('form').addEventListener('submit', function(e) {
+            const name = nameInput.value.trim();
+            
+            if (name.length < 3) {
+                e.preventDefault();
+                alert('Character name must be at least 3 characters long.');
+                nameInput.focus();
+                return;
+            }
+            
+            if (name.length > 50) {
+                e.preventDefault();
+                alert('Character name must be 50 characters or less.');
+                nameInput.focus();
+                return;
+            }
+            
+            // Disable submit button to prevent double-submission
+            const submitBtn = this.querySelector('.create-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating Character...';
+        });
+    </script>
+</body>
+</html>

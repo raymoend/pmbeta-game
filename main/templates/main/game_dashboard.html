@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>The Shattered Realm - Dashboard</title>
+    
+    <!-- MapBox CSS -->
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    
+    <!-- Game CSS -->
+    <link rel="stylesheet" href="{% load static %}{% static 'css/game-dashboard.css' %}">
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading The Shattered Realm...</div>
+        <div class="loading-progress">
+            <div class="progress-bar" id="loading-progress-bar"></div>
+        </div>
+    </div>
+
+    <!-- Main Game Container -->
+    <div id="game-container" class="game-container hidden">
+        
+        <!-- Header -->
+        <header class="game-header">
+            <div class="header-left">
+                <div class="logo">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>The Shattered Realm</span>
+                </div>
+                <div class="connection-status" id="connection-status">
+                    <i class="fas fa-circle" id="connection-indicator"></i>
+                    <span id="connection-text">Connecting...</span>
+                </div>
+            </div>
+            
+            <div class="header-center">
+                <div class="character-info" id="character-info">
+                    <div class="character-name">{{ user.character.name }}</div>
+                    <div class="character-level">Level <span id="character-level">{{ user.character.level }}</span></div>
+                </div>
+            </div>
+            
+            <div class="header-right">
+                <button class="header-btn" id="notifications-btn" title="Notifications">
+                    <i class="fas fa-bell"></i>
+                    <span class="notification-count" id="notification-count">0</span>
+                </button>
+                <button class="header-btn" id="settings-btn" title="Settings">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <button class="header-btn" id="logout-btn" title="Logout">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="game-main">
+            
+            <!-- Left Sidebar -->
+            <aside class="left-sidebar">
+                
+                <!-- Character Stats Panel -->
+                <div class="panel" id="character-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-user"></i> Character</h3>
+                        <button class="panel-toggle" data-target="character-content">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                    <div class="panel-content" id="character-content">
+                        <div class="health-bar">
+                            <div class="stat-label">Health</div>
+                            <div class="bar-container">
+                                <div class="bar health-bar-fill" id="health-bar"></div>
+                                <div class="bar-text" id="health-text">100/100</div>
+                            </div>
+                        </div>
+                        
+                        <div class="experience-bar">
+                            <div class="stat-label">Experience</div>
+                            <div class="bar-container">
+                                <div class="bar exp-bar-fill" id="exp-bar"></div>
+                                <div class="bar-text" id="exp-text">0/1000</div>
+                            </div>
+                        </div>
+                        
+                        <div class="character-stats">
+                            <div class="stat-row">
+                                <span class="stat-name">Gold:</span>
+                                <span class="stat-value" id="character-gold">1000</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-name">Strength:</span>
+                                <span class="stat-value" id="character-strength">10</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-name">Defense:</span>
+                                <span class="stat-value" id="character-defense">10</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-name">Vitality:</span>
+                                <span class="stat-value" id="character-vitality">10</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-name">Agility:</span>
+                                <span class="stat-value" id="character-agility">10</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="stat-name">Intelligence:</span>
+                                <span class="stat-value" id="character-intelligence">10</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Location Panel -->
+                <div class="panel" id="location-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-map-marker-alt"></i> Location</h3>
+                        <button class="panel-toggle" data-target="location-content">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                    <div class="panel-content" id="location-content">
+                        <div class="location-info">
+                            <div class="location-name" id="current-location-name">Loading...</div>
+                            <div class="coordinates" id="current-coordinates">0.0000, 0.0000</div>
+                            <div class="region-info" id="current-region">No region</div>
+                        </div>
+                        <button class="btn btn-primary btn-small" id="update-location-btn">
+                            <i class="fas fa-crosshairs"></i> Update Location
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Combat Panel -->
+                <div class="panel" id="combat-panel" style="display: none;">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-sword"></i> Combat</h3>
+                    </div>
+                    <div class="panel-content" id="combat-content">
+                        <div class="combat-enemy" id="combat-enemy-info">
+                            <div class="enemy-name" id="enemy-name">Unknown Enemy</div>
+                            <div class="enemy-health">
+                                <div class="bar-container">
+                                    <div class="bar enemy-health-bar" id="enemy-health-bar"></div>
+                                    <div class="bar-text" id="enemy-health-text">100/100</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="combat-actions">
+                            <button class="btn btn-danger" id="attack-btn">
+                                <i class="fas fa-sword"></i> Attack
+                            </button>
+                            <button class="btn btn-warning" id="flee-btn">
+                                <i class="fas fa-running"></i> Flee
+                            </button>
+                        </div>
+                        
+                        <div class="combat-log" id="combat-log">
+                            <!-- Combat messages will appear here -->
+                        </div>
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- Main Map Area -->
+            <section class="map-section">
+                <div id="map-container" class="map-container">
+                    <!-- MapBox map will be initialized here -->
+                    <div id="map"></div>
+                    
+                    <!-- Map Controls -->
+                    <div class="map-controls">
+                        <button class="map-btn" id="center-map-btn" title="Center on Character">
+                            <i class="fas fa-crosshairs"></i>
+                        </button>
+                        <button class="map-btn" id="fullscreen-map-btn" title="Fullscreen">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Monster List Overlay -->
+                    <div class="map-overlay" id="nearby-monsters">
+                        <div class="overlay-header">
+                            <h4><i class="fas fa-dragon"></i> Nearby Monsters</h4>
+                            <button class="close-btn" id="close-monsters-btn">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="monster-list" id="monster-list">
+                            <!-- Monster list will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Sidebar -->
+            <aside class="right-sidebar">
+                
+                <!-- Chat Panel -->
+                <div class="panel" id="chat-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-comments"></i> Chat</h3>
+                        <div class="chat-channels">
+                            <button class="chat-channel active" data-channel="global">Global</button>
+                            <button class="chat-channel" data-channel="location">Local</button>
+                        </div>
+                    </div>
+                    <div class="panel-content" id="chat-content">
+                        <div class="chat-messages" id="chat-messages">
+                            <!-- Chat messages will appear here -->
+                        </div>
+                        <div class="chat-input-container">
+                            <input type="text" class="chat-input" id="chat-input" placeholder="Type your message..." maxlength="200">
+                            <button class="send-btn" id="send-chat-btn">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quest Panel -->
+                <div class="panel" id="quest-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-scroll"></i> Quests</h3>
+                        <button class="panel-toggle" data-target="quest-content">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                    <div class="panel-content" id="quest-content">
+                        <div class="quest-actions">
+                            <button class="btn btn-primary btn-small" id="generate-quest-btn">
+                                <i class="fas fa-plus"></i> New Quest
+                            </button>
+                        </div>
+                        <div class="quest-list" id="quest-list">
+                            <!-- Available quests will appear here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Inventory Panel -->
+                <div class="panel" id="inventory-panel">
+                    <div class="panel-header">
+                        <h3><i class="fas fa-backpack"></i> Inventory</h3>
+                        <button class="panel-toggle" data-target="inventory-content">
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                    </div>
+                    <div class="panel-content collapsed" id="inventory-content">
+                        <div class="inventory-grid" id="inventory-grid">
+                            <!-- Inventory items will appear here -->
+                        </div>
+                        <div class="inventory-info">
+                            <span id="inventory-weight">0/50</span>
+                            <span class="weight-label">Weight</span>
+                        </div>
+                    </div>
+                </div>
+
+            </aside>
+
+        </main>
+    </div>
+
+    <!-- Modals -->
+    
+    <!-- Quest Generation Modal -->
+    <div class="modal" id="quest-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Generate New Quest</h3>
+                <button class="close-btn" id="close-quest-modal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="quest-type">Quest Type:</label>
+                    <select id="quest-type" class="form-control">
+                        <option value="">Random</option>
+                        <option value="kill">Kill Monsters</option>
+                        <option value="collect">Collect Items</option>
+                        <option value="deliver">Deliver Items</option>
+                        <option value="explore">Explore Location</option>
+                        <option value="daily">Daily Quest</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="quest-difficulty">Difficulty:</label>
+                    <select id="quest-difficulty" class="form-control">
+                        <option value="easy">Easy</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="hard">Hard</option>
+                        <option value="epic">Epic</option>
+                        <option value="legendary">Legendary</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-quest-btn">Cancel</button>
+                <button class="btn btn-primary" id="confirm-quest-btn">Generate Quest</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trade Modal -->
+    <div class="modal" id="trade-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Trade Request</h3>
+                <button class="close-btn" id="close-trade-modal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="trade-modal-body">
+                <!-- Trade request content will be populated here -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="decline-trade-btn">Decline</button>
+                <button class="btn btn-success" id="accept-trade-btn">Accept</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification System -->
+    <div class="notifications" id="notifications">
+        <!-- Notifications will appear here -->
+    </div>
+
+    <!-- Scripts -->
+    <!-- MapBox JavaScript -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    
+    <!-- Game Scripts -->
+    <script src="{% load static %}{% static 'js/game-api.js' %}"></script>
+    <script src="{% load static %}{% static 'js/game-websocket.js' %}"></script>
+    <script src="{% load static %}{% static 'js/game-map.js' %}"></script>
+    <script src="{% load static %}{% static 'js/game-dashboard.js' %}"></script>
+    
+    <!-- Initialize Game -->
+    <script>
+        // Initialize the game when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            window.gameApp = new GameDashboard({
+                mapboxAccessToken: '{{ mapbox_access_token|default:"" }}',
+                character: {
+                    id: '{{ user.character.id }}',
+                    name: '{{ user.character.name }}',
+                    level: {{ user.character.level }},
+                    lat: {{ user.character.lat }},
+                    lon: {{ user.character.lon }}
+                }
+            });
+        });
+    </script>
+</body>
+</html>
