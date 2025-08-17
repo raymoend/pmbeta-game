@@ -3,6 +3,9 @@ URL patterns for RPG game system
 """
 from django.urls import path
 from django.contrib.auth import views as auth_views
+from django.contrib.auth.forms import UserCreationForm
+from django.views.generic import CreateView
+from django.urls import reverse_lazy
 from . import views_rpg
 
 urlpatterns = [
@@ -14,6 +17,11 @@ urlpatterns = [
     # Authentication (keeping existing auth system)
     path('login/', auth_views.LoginView.as_view(template_name='registration/login.html'), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
+    path('register/', CreateView.as_view(
+        form_class=UserCreationForm,
+        template_name='registration/register.html',
+        success_url=reverse_lazy('character_creation')
+    ), name='register'),
     
     # Character API endpoints
     path('api/rpg/character/status/', views_rpg.api_character_status, name='api_character_status'),
