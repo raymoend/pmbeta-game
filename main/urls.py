@@ -34,4 +34,9 @@ urlpatterns = [
     path('api/inventory/use/', views_resources.use_item, name='api_use_item'),
     path('api/inventory/berries/', views_resources.use_berries, name='api_use_berries'),
     path('api/harvest-history/', views_resources.harvest_history, name='api_harvest_history'),
+    
+    # PK Movement API (temporary - until PK models are fixed)
+    path('api/player/move/', views.api_player_move, name='api_player_move'),
+    path('api/resources/collect/<uuid:resource_id>/', views.api_collect_resource, name='api_collect_resource'),
+    path('api/resources/check-spawn/', views.api_check_resource_spawn, name='api_check_resource_spawn'),
 ]

@@ -122,3 +122,91 @@ def health_check(request):
             'error': str(e),
             'error_type': type(e).__name__,
         }, status=500)
+
+
+# ===============================
+# PK MOVEMENT API (TEMPORARY)
+# ===============================
+
+@login_required
+def api_player_move(request):
+    """Mock API for PK player movement - returns success for testing"""
+    import json
+    from django.views.decorators.csrf import csrf_exempt
+    from django.utils.decorators import method_decorator
+    from django.views.decorators.http import require_http_methods
+    
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        new_lat = float(data.get('lat'))
+        new_lon = float(data.get('lon'))
+        
+        # Mock successful movement (since PK models are disabled)
+        return JsonResponse({
+            'success': True,
+            'energy_used': 1,
+            'remaining_energy': 95,
+            'new_position': {
+                'lat': new_lat,
+                'lon': new_lon
+            }
+        })
+        
+    except (ValueError, KeyError) as e:
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid coordinates'
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required 
+def api_collect_resource(request, resource_id):
+    """Mock API for PK resource collection - returns success for testing"""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POST required'}, status=405)
+    
+    try:
+        # Mock successful resource collection
+        return JsonResponse({
+            'success': True,
+            'items_gained': '5 lumber, 2 stone',
+            'yields': {
+                'lumber': 5,
+                'stone': 2,
+                'ore': 0,
+                'gold': 1,
+                'food': 0
+            },
+            'energy_used': 2,
+            'remaining_energy': 93
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+def api_check_resource_spawn(request):
+    """Mock API for PK resource spawning - returns empty for testing"""
+    try:
+        return JsonResponse({
+            'success': True,
+            'spawned': []  # No new resources spawned for now
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
