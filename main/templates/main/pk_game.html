@@ -550,6 +550,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     <p>You are here</p>
                 </div>`))
             .addTo(worldMap);
+            
+            // Load territory circles once map is ready
+            if (window.flagSystem) {
+                setTimeout(() => {
+                    window.flagSystem.loadTerritoryCircles();
+                }, 1000);
+            }
         });
     }
     
@@ -593,6 +600,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     <p>You are here</p>
                 </div>`))
             .addTo(territoryMap);
+            
+            // Load territory circles once map is ready
+            if (window.flagSystem) {
+                setTimeout(() => {
+                    window.flagSystem.loadTerritoryCircles();
+                }, 1000);
+            }
             
             // Setup UI handlers
             setupTerritoryUI();
@@ -648,10 +662,13 @@ document.addEventListener('DOMContentLoaded', function() {
         console.warn('🚩 SimpleFlagSystem not found - flag placement may not work');
     }
     
-    // Global references
+    // Global references for flag system
     window.territoryManager = territoryManager;
     window.switchPanel = switchPanel;
     window.flagSystem = flagSystem;
+    window.worldMap = worldMap;
+    window.territoryMap = territoryMap;
+    window.character = character;  // Make character data globally accessible
 });
 </script>
 {% endblock %}

@@ -35,10 +35,11 @@ def can_place_flag_at_location(character, lat, lon, radius=200):
     # Get minimum distance between flags from settings
     min_distance = settings.GAME_SETTINGS.get('FLAG_PLACEMENT_MIN_DISTANCE', 400)
     
-    # Check all existing flags for distance conflicts
+    # Check all existing flags for distance conflicts (including own flags)
+    # In PK style, you cannot place overlapping flags even if they're your own
     existing_flags = TerritoryFlag.objects.filter(
         status__in=['active', 'constructing', 'upgrading', 'damaged']
-    ).exclude(owner=character)  # Don't check against own flags
+    )  # Check against ALL flags, including own
     
     for existing_flag in existing_flags:
         distance_to_flag = existing_flag.distance_to(lat, lon)

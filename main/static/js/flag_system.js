@@ -96,27 +96,51 @@ class SimpleFlagSystem {
     handleGameGridRightClick(event) {
         console.log('🚩 Right-click detected on PK game grid');
         
-        // For PK game, we'll create coordinates based on the click position within the game grid
-        // Since PK doesn't use real geographic coordinates, we'll simulate them
-        const gameView = document.getElementById('pk-map') || document.getElementById('territory-map') || document.querySelector('.pk-content-area');
-        const gameRect = gameView.getBoundingClientRect();
-        const relativeX = (event.clientX - gameRect.left) / gameRect.width;
-        const relativeY = (event.clientY - gameRect.top) / gameRect.height;
+        // Get the MapBox map instance
+        const map = window.worldMap || window.territoryMap;
         
-        // Convert to simulated lat/lng (around player's position if available)
-        let simulatedLat, simulatedLng;
-        if (window.gameState && window.gameState.player) {
-            // Use player's position as base and add small offset based on click position
-            simulatedLat = window.gameState.player.lat + (relativeY - 0.5) * 0.001;
-            simulatedLng = window.gameState.player.lon + (relativeX - 0.5) * 0.001;
+        if (map) {
+            // Use MapBox's unproject method to get proper geographic coordinates
+            const rect = (document.getElementById('pk-map') || document.getElementById('territory-map')).getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // Convert pixel coordinates to geographic coordinates using MapBox
+            const lngLat = map.unproject([x, y]);
+            console.log(`🚩 Converted click to coordinates: ${lngLat.lat}, ${lngLat.lng}`);
+            
+            // Show flag placement menu
+            this.showFlagPlacementMenu(event.clientX, event.clientY, lngLat.lat, lngLat.lng);
         } else {
-            // Default fallback coordinates
-            simulatedLat = 40.7589 + (relativeY - 0.5) * 0.001;
-            simulatedLng = -73.9851 + (relativeX - 0.5) * 0.001;
+            console.warn('🚩 No map instance available for coordinate conversion');
+            // Fallback to simulated coordinates
+            const gameView = document.getElementById('pk-map') || document.getElementById('territory-map') || document.querySelector('.pk-content-area');
+            const gameRect = gameView.getBoundingClientRect();
+            const relativeX = (event.clientX - gameRect.left) / gameRect.width;
+            const relativeY = (event.clientY - gameRect.top) / gameRect.height;
+            
+            // Convert to coordinates based on player's actual position
+            let simulatedLat, simulatedLng;
+            if (window.character) {
+                // Use actual player's position as base and add small offset based on click position
+                // Convert click offset to a more reasonable distance (max ~200m in any direction)
+                const offsetLat = (relativeY - 0.5) * 0.002; // ~200m max offset
+                const offsetLng = (relativeX - 0.5) * 0.002; // ~200m max offset
+                simulatedLat = window.character.lat + offsetLat;
+                simulatedLng = window.character.lon + offsetLng;
+                console.log(`🚩 Using player position: ${window.character.lat}, ${window.character.lon}`);
+                console.log(`🚩 Click offset: ${offsetLat}, ${offsetLng}`);
+                console.log(`🚩 Final coordinates: ${simulatedLat}, ${simulatedLng}`);
+            } else {
+                // Fallback coordinates if character data not available
+                simulatedLat = 40.7589 + (relativeY - 0.5) * 0.001;
+                simulatedLng = -73.9851 + (relativeX - 0.5) * 0.001;
+                console.log('🚩 No character data available, using fallback coordinates');
+            }
+            
+            // Show flag placement menu
+            this.showFlagPlacementMenu(event.clientX, event.clientY, simulatedLat, simulatedLng);
         }
-        
-        // Show flag placement menu
-        this.showFlagPlacementMenu(event.clientX, event.clientY, simulatedLat, simulatedLng);
     }
     
     addFlagOptionToExistingMenu(existingMenu, event) {
@@ -249,7 +273,14 @@ class SimpleFlagSystem {
                 this.removeFlagMenu();
                 
                 if (action === 'place') {
-                    this.showFlagPlacementDialog(lat, lon);
+                    // Check if location is valid before showing dialog
+                    this.checkCanPlaceFlag(lat, lon).then(canPlace => {
+                        if (canPlace.can_place) {
+                            this.showFlagPlacementDialog(lat, lon);
+                        } else {
+                            this.showNotification(canPlace.message, 'error');
+                        }
+                    });
                 }
             });
         });
@@ -626,6 +657,29 @@ class SimpleFlagSystem {
                    ?.split('=')[1] || '';
     }
     
+    async checkCanPlaceFlag(lat, lon) {
+        try {
+            const response = await fetch('/api/flags/can-place/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCsrfToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    lat: lat,
+                    lon: lon
+                })
+            });
+            
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('❌ Error checking flag placement:', error);
+            return { can_place: false, message: 'Error checking placement validity' };
+        }
+    }
+    
     async loadTerritoryCircles() {
         try {
             // Check if we have access to a MapBox map instance
@@ -636,13 +690,15 @@ class SimpleFlagSystem {
             }
             
             // Get territory GeoJSON data
-            const response = await fetch('/api/flags/territories-geojson/?radius=2.0', {
+            const response = await fetch('/api/flags/territories/geojson/?radius=2.0', {
                 credentials: 'include'
             });
             
             const data = await response.json();
+            console.log('🚩 Territory GeoJSON response:', data);
             
             if (data.success && data.geojson) {
+                console.log(`🚩 Processing ${data.geojson.features.length} territory features`);
                 // Remove existing territory layers
                 if (map.getLayer('flag-territories-fill')) {
                     map.removeLayer('flag-territories-fill');
