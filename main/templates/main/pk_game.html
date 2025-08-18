@@ -471,6 +471,9 @@
 <!-- Flag System -->
 <script src="{% static 'js/flag_system.js' %}"></script>
 
+<!-- PK Movement System -->
+<script src="{% static 'js/pk_movement.js' %}"></script>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Character data from Django context
@@ -662,10 +665,39 @@ document.addEventListener('DOMContentLoaded', function() {
         console.warn('🚩 SimpleFlagSystem not found - flag placement may not work');
     }
     
+    // Initialize PK movement system
+    let pkMovementSystem;
+    if (typeof PKMovementSystem !== 'undefined') {
+        // Wait for maps to be ready before initializing movement system
+        const initMovementSystem = () => {
+            if (worldMap && worldMap.loaded()) {
+                pkMovementSystem = new PKMovementSystem({
+                    worldMap: worldMap,
+                    territoryMap: territoryMap,
+                    character: character,
+                    onLocationUpdate: (newLat, newLon) => {
+                        // Update UI with new location - find the location stat more reliably
+                        const locationStat = document.querySelector('.pk-character-info .pk-stat:last-child .pk-stat-value');
+                        if (locationStat) {
+                            locationStat.textContent = `${newLat.toFixed(3)},${newLon.toFixed(3)}`;
+                        }
+                    }
+                });
+                console.log('🎮 PK Movement System initialized');
+            } else {
+                setTimeout(initMovementSystem, 100);
+            }
+        };
+        setTimeout(initMovementSystem, 1000);
+    } else {
+        console.warn('🎮 PKMovementSystem not found - tap-to-move may not work');
+    }
+    
     // Global references for flag system
     window.territoryManager = territoryManager;
     window.switchPanel = switchPanel;
     window.flagSystem = flagSystem;
+    window.pkMovementSystem = pkMovementSystem;
     window.worldMap = worldMap;
     window.territoryMap = territoryMap;
     window.character = character;  // Make character data globally accessible

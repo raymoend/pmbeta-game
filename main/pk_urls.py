@@ -24,6 +24,9 @@ pk_patterns = [
     
     # Resource gathering
     path('api/resource/harvest/', pk_views.api_harvest_resource, name='pk_api_harvest_resource'),
+    path('api/resources/nearby/', pk_views.api_resources_nearby, name='pk_api_resources_nearby'),
+    path('api/resources/collect/<uuid:resource_id>/', pk_views.api_collect_resource, name='pk_api_collect_resource'),
+    path('api/resources/check-spawn/', pk_views.api_check_resource_spawn, name='pk_api_check_resource_spawn'),
     
     # Territory management
     path('api/territory/place/', pk_views.api_place_territory, name='pk_api_place_territory'),

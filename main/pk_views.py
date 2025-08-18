@@ -96,7 +96,9 @@ def pk_game(request):
         )
     
     context = {
-        'player': player,
+        'character': player,  # Template expects 'character'
+        'player': player,      # Keep 'player' for compatibility
+        'MAPBOX_ACCESS_TOKEN': getattr(settings, 'MAPBOX_ACCESS_TOKEN', 'pk.your_mapbox_token_here'),
         'pk_settings': {
             'MOVEMENT_COST': 1,  # Energy per movement
             'HARVEST_COST': 2,   # Energy per harvest
@@ -108,7 +110,7 @@ def pk_game(request):
         }
     }
     
-    return render(request, 'pk/game.html', context)
+    return render(request, 'main/pk_game.html', context)
 
 
 # ===============================
@@ -416,6 +418,231 @@ def api_harvest_resource(request):
             'success': False,
             'error': 'Resource not found'
         }, status=404)
+    except PKPlayer.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Player not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_resources_nearby(request):
+    """Get resources near a location for PK movement system"""
+    try:
+        player = PKPlayer.objects.get(user=request.user)
+        
+        # Get coordinates from query params
+        lat = float(request.GET.get('lat', player.lat))
+        lon = float(request.GET.get('lon', player.lon))
+        radius = float(request.GET.get('radius', 1000))  # meters
+        
+        # Convert radius to degrees (rough approximation)
+        radius_degrees = radius / 111320.0  # meters to degrees
+        
+        # Get resources in area
+        resources = PKResource.objects.filter(
+            lat__gte=lat - radius_degrees,
+            lat__lte=lat + radius_degrees,
+            lon__gte=lon - radius_degrees,
+            lon__lte=lon + radius_degrees,
+            is_depleted=False
+        )
+        
+        resource_list = []
+        for resource in resources:
+            resource_list.append({
+                'id': str(resource.id),
+                'type': resource.resource_type,
+                'lat': resource.lat,
+                'lon': resource.lon,
+                'quantity': resource.health,  # Use health as quantity indicator
+                'level': resource.level
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'resources': resource_list
+        })
+        
+    except PKPlayer.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Player not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_collect_resource(request, resource_id):
+    """Collect a specific resource (used by PK movement system)"""
+    try:
+        player = PKPlayer.objects.get(user=request.user)
+        resource = PKResource.objects.get(id=resource_id)
+        
+        # Check distance (must be within 100m for tap-to-collect)
+        distance = player.distance_between(player.lat, player.lon, resource.lat, resource.lon)
+        if distance > 100:
+            return JsonResponse({
+                'success': False,
+                'error': f'Too far from resource (need to be within 100m, currently {int(distance)}m)'
+            }, status=400)
+        
+        # Check energy cost
+        energy_cost = 2
+        if not player.can_perform_action(energy_cost=energy_cost):
+            return JsonResponse({
+                'success': False,
+                'error': f'Not enough energy (need {energy_cost}, have {player.energy})'
+            }, status=400)
+        
+        # Harvest the resource
+        yields = resource.harvest(player)
+        if not yields:
+            return JsonResponse({
+                'success': False,
+                'error': 'Resource is depleted'
+            }, status=400)
+        
+        # Apply yields to player
+        player.lumber += yields['lumber']
+        player.stone += yields['stone']
+        player.ore += yields['ore']
+        player.gold += yields['gold']
+        player.food += yields['food']
+        player.energy -= energy_cost
+        player.save()
+        
+        # Format collected items for display
+        items_gained = []
+        if yields['lumber'] > 0:
+            items_gained.append(f"{yields['lumber']} lumber")
+        if yields['stone'] > 0:
+            items_gained.append(f"{yields['stone']} stone")
+        if yields['ore'] > 0:
+            items_gained.append(f"{yields['ore']} ore")
+        if yields['gold'] > 0:
+            items_gained.append(f"{yields['gold']} gold")
+        if yields['food'] > 0:
+            items_gained.append(f"{yields['food']} food")
+        
+        return JsonResponse({
+            'success': True,
+            'items_gained': ', '.join(items_gained),
+            'yields': yields,
+            'energy_used': energy_cost,
+            'remaining_energy': player.energy
+        })
+        
+    except PKResource.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Resource not found'
+        }, status=404)
+    except PKPlayer.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Player not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_check_resource_spawn(request):
+    """Check if new resources should spawn in territories when player moves"""
+    try:
+        player = PKPlayer.objects.get(user=request.user)
+        
+        # Get player coordinates
+        lat = float(request.GET.get('lat', player.lat))
+        lon = float(request.GET.get('lon', player.lon))
+        
+        # Check if player is in any territories (their own or others)
+        radius_degrees = 0.001  # ~100m territory radius
+        territories = PKTerritory.objects.filter(
+            lat__gte=lat - radius_degrees,
+            lat__lte=lat + radius_degrees,
+            lon__gte=lon - radius_degrees,
+            lon__lte=lon + radius_degrees,
+            is_active=True
+        )
+        
+        spawned_resources = []
+        
+        for territory in territories:
+            # Check if territory needs more resources (PK style - resources spawn in territories)
+            territory_radius = 0.0005  # ~50m around territory
+            existing_resources = PKResource.objects.filter(
+                lat__gte=territory.lat - territory_radius,
+                lat__lte=territory.lat + territory_radius,
+                lon__gte=territory.lon - territory_radius,
+                lon__lte=territory.lon + territory_radius,
+                is_depleted=False
+            ).count()
+            
+            # Spawn resources if territory has fewer than 3 resources
+            if existing_resources < 3 and random.random() < 0.3:  # 30% chance to spawn
+                # Random position near territory
+                angle = random.uniform(0, 2 * math.pi)
+                distance = random.uniform(0, territory_radius)
+                
+                resource_lat = territory.lat + distance * math.cos(angle)
+                resource_lon = territory.lon + distance * math.sin(angle)
+                
+                # Random resource type based on territory type
+                if territory.territory_type == 'city':
+                    resource_types = ['tree', 'rock', 'mine', 'ruins']
+                elif territory.territory_type == 'outpost':
+                    resource_types = ['tree', 'rock', 'mine']
+                else:  # flag
+                    resource_types = ['tree', 'rock']
+                    
+                resource_type = random.choice(resource_types)
+                
+                # Set yields based on type
+                yields = {
+                    'tree': {'lumber_yield': 20, 'stone_yield': 0, 'ore_yield': 0, 'gold_yield': 3, 'food_yield': 5},
+                    'rock': {'lumber_yield': 0, 'stone_yield': 15, 'ore_yield': 3, 'gold_yield': 1, 'food_yield': 0},
+                    'mine': {'lumber_yield': 0, 'stone_yield': 3, 'ore_yield': 12, 'gold_yield': 8, 'food_yield': 0},
+                    'ruins': {'lumber_yield': 8, 'stone_yield': 8, 'ore_yield': 8, 'gold_yield': 25, 'food_yield': 10}
+                }
+                
+                resource = PKResource.objects.create(
+                    resource_type=resource_type,
+                    lat=resource_lat,
+                    lon=resource_lon,
+                    level=random.randint(1, 3),
+                    **yields[resource_type]
+                )
+                
+                spawned_resources.append({
+                    'id': str(resource.id),
+                    'type': resource_type,
+                    'lat': resource_lat,
+                    'lon': resource_lon,
+                    'level': resource.level
+                })
+        
+        return JsonResponse({
+            'success': True,
+            'spawned': spawned_resources
+        })
+        
     except PKPlayer.DoesNotExist:
         return JsonResponse({
             'success': False,

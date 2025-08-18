@@ -49,7 +49,7 @@ class EntityMotion:
         
         # Calculate movement time based on distance and speed
         distance = self._calculate_distance(self.lat, self.lon, target_lat, target_lon)
-        movement_speed = getattr(settings, 'MOVEMENT_SPEED', 320)  # meters per second (P2K: 320 m/s)
+        movement_speed = getattr(settings, 'MOVEMENT_SPEED', 220)  # meters per second (PK: 220 m/s)
         travel_time = max(1, distance / movement_speed)  # Minimum 1 second
         
         self.target_lat = target_lat
