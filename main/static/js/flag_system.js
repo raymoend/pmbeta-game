@@ -400,6 +400,7 @@ class SimpleFlagSystem {
 
     async loadNearbyFlags() {
         try {
+            // Load flag data
             const response = await fetch('/api/flags/nearby/?radius=1.0', {
                 credentials: 'include'
             });
@@ -418,6 +419,10 @@ class SimpleFlagSystem {
                     this.addFlag(flag);
                 });
             }
+            
+            // Also load territory visualization if we have a map
+            this.loadTerritoryCircles();
+            
         } catch (error) {
             console.error('❌ Error loading flags:', error);
         }
@@ -619,6 +624,122 @@ class SimpleFlagSystem {
                document.cookie.split('; ')
                    .find(row => row.startsWith('csrftoken='))
                    ?.split('=')[1] || '';
+    }
+    
+    async loadTerritoryCircles() {
+        try {
+            // Check if we have access to a MapBox map instance
+            const map = window.worldMap || window.territoryMap;
+            if (!map) {
+                console.log('🚩 No map instance available for territory visualization');
+                return;
+            }
+            
+            // Get territory GeoJSON data
+            const response = await fetch('/api/flags/territories-geojson/?radius=2.0', {
+                credentials: 'include'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success && data.geojson) {
+                // Remove existing territory layers
+                if (map.getLayer('flag-territories-fill')) {
+                    map.removeLayer('flag-territories-fill');
+                }
+                if (map.getLayer('flag-territories-border')) {
+                    map.removeLayer('flag-territories-border');
+                }
+                if (map.getSource('flag-territories')) {
+                    map.removeSource('flag-territories');
+                }
+                
+                // Add territory source
+                map.addSource('flag-territories', {
+                    type: 'geojson',
+                    data: data.geojson
+                });
+                
+                // Add territory fill layer (transparent colored circles)
+                map.addLayer({
+                    id: 'flag-territories-fill',
+                    type: 'fill',
+                    source: 'flag-territories',
+                    paint: {
+                        'fill-color': [
+                            'case',
+                            ['get', 'is_own'],
+                            '#4CAF50',  // Green for own territories
+                            ['get', 'flag_color']  // Use flag color for others
+                        ],
+                        'fill-opacity': [
+                            'case',
+                            ['get', 'is_own'],
+                            0.2,  // Less transparent for own territories
+                            0.1   // More transparent for others
+                        ]
+                    }
+                });
+                
+                // Add territory border layer
+                map.addLayer({
+                    id: 'flag-territories-border',
+                    type: 'line',
+                    source: 'flag-territories',
+                    paint: {
+                        'line-color': [
+                            'case',
+                            ['get', 'is_own'],
+                            '#4CAF50',  // Green border for own territories
+                            ['get', 'flag_color']  // Use flag color for others
+                        ],
+                        'line-width': [
+                            'case',
+                            ['get', 'is_own'],
+                            2,  // Thicker border for own territories
+                            1   // Thin border for others
+                        ],
+                        'line-opacity': 0.6
+                    }
+                });
+                
+                // Add click handler for territories
+                map.on('click', 'flag-territories-fill', (e) => {
+                    const properties = e.features[0].properties;
+                    this.showTerritoryPopup(e.lngLat, properties);
+                });
+                
+                // Change cursor on hover
+                map.on('mouseenter', 'flag-territories-fill', () => {
+                    map.getCanvas().style.cursor = 'pointer';
+                });
+                
+                map.on('mouseleave', 'flag-territories-fill', () => {
+                    map.getCanvas().style.cursor = '';
+                });
+                
+                console.log(`🚩 Loaded ${data.geojson.features.length} territory circles`);
+            }
+        } catch (error) {
+            console.error('❌ Error loading territory circles:', error);
+        }
+    }
+    
+    showTerritoryPopup(lngLat, properties) {
+        const popup = new mapboxgl.Popup()
+            .setLngLat(lngLat)
+            .setHTML(`
+                <div style="padding: 10px;">
+                    <h4 style="margin: 0 0 10px 0; color: ${properties.flag_color};">
+                        🚩 ${properties.name}
+                    </h4>
+                    <p style="margin: 5px 0;"><strong>Owner:</strong> ${properties.owner} ${properties.is_own ? '(You)' : ''}</p>
+                    <p style="margin: 5px 0;"><strong>Level:</strong> ${properties.level}/5</p>
+                    <p style="margin: 5px 0;"><strong>Status:</strong> ${properties.status}</p>
+                    <p style="margin: 5px 0;"><strong>Radius:</strong> ${properties.radius_meters}m</p>
+                </div>
+            `)
+            .addTo(window.worldMap || window.territoryMap);
     }
 }
 

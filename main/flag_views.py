@@ -21,8 +21,10 @@ from .building_models import FlagColor
 def can_place_flag_at_location(character, lat, lon, radius=200):
     """
     Check if a flag can be placed at the given location
-    Implements PK territory overlap rules
+    Implements PK territory overlap rules - flags must be outside existing territory radius
     """
+    from django.conf import settings
+    
     # Check if location is within reasonable distance of player
     distance_to_player = character.distance_to(lat, lon)
     max_placement_distance = 1000  # 1km max like PK
@@ -30,20 +32,20 @@ def can_place_flag_at_location(character, lat, lon, radius=200):
     if distance_to_player > max_placement_distance:
         return False, f"Cannot place flag more than {max_placement_distance}m from your location"
     
-    # Check for territory overlaps using TerritoryZones
-    overlapping_zones = TerritoryZone.objects.filter(
-        # Quick bounding box filter
-        north_lat__gte=lat - (radius / 111000.0),
-        south_lat__lte=lat + (radius / 111000.0),
-        east_lon__gte=lon - (radius / (111000.0 * math.cos(math.radians(lat)))),
-        west_lon__lte=lon + (radius / (111000.0 * math.cos(math.radians(lat))))
-    )
+    # Get minimum distance between flags from settings
+    min_distance = settings.GAME_SETTINGS.get('FLAG_PLACEMENT_MIN_DISTANCE', 400)
     
-    for zone in overlapping_zones:
-        if zone.overlaps_with(lat, lon, radius):
-            if zone.flag.owner != character:
-                return False, f"Territory overlaps with {zone.flag.owner.name}'s {zone.flag.display_name}"
-            # Allow player to place near their own flags
+    # Check all existing flags for distance conflicts
+    existing_flags = TerritoryFlag.objects.filter(
+        status__in=['active', 'constructing', 'upgrading', 'damaged']
+    ).exclude(owner=character)  # Don't check against own flags
+    
+    for existing_flag in existing_flags:
+        distance_to_flag = existing_flag.distance_to(lat, lon)
+        required_distance = existing_flag.radius_meters + radius  # Sum of both radii
+        
+        if distance_to_flag < required_distance:
+            return False, f"Too close to {existing_flag.owner.name}'s {existing_flag.display_name}. Need {required_distance}m distance (currently {int(distance_to_flag)}m)"
     
     return True, "Location is available"
 

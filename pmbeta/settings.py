@@ -174,6 +174,11 @@ GAME_SETTINGS = {
     'COMBAT_RANGE': 100,  # meters - range for attacking other players
     'ACTIVITY_SUCCESS_BONUS': 0.1,  # Bonus success chance per level
     'REPUTATION_DECAY_RATE': 1,  # Reputation points lost per day of inactivity
+    
+    # Flag territory system (Parallel Kingdom style)
+    'FLAG_BASE_RADIUS_METERS': 200,  # Level 1 flag territory radius
+    'FLAG_LEVEL_RADIUS_MULTIPLIER': 1.5,  # Multiplier per level (L1:200m, L2:300m, L3:450m, etc)
+    'FLAG_PLACEMENT_MIN_DISTANCE': 400,  # Minimum distance between flags (2x base radius)
 }
 
 # Authentication settings
