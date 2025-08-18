@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Building System Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid #2ecc71;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #2ecc71;
+            margin: 0;
+        }
+        .demo-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        .demo-link {
+            background: rgba(46, 204, 113, 0.1);
+            border: 2px solid #2ecc71;
+            border-radius: 10px;
+            padding: 20px;
+            text-decoration: none;
+            color: white;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .demo-link:hover {
+            background: rgba(46, 204, 113, 0.2);
+            transform: translateY(-2px);
+        }
+        .instructions {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .credentials {
+            background: rgba(241, 196, 15, 0.2);
+            border: 2px solid #f1c40f;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .feature {
+            background: rgba(52, 73, 94, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #2ecc71;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏗️ Building System Demo</h1>
+            <p>Right-click building placement system like Parallel Kingdom!</p>
+        </div>
+
+        <div class="credentials">
+            <h3>🔑 Test Accounts Ready:</h3>
+            <p><strong>Admin Account:</strong> Username: <code>admin</code> | Password: <code>admin123</code></p>
+            <p><strong>Player Account:</strong> Username: <code>ray</code> | Password: (ask for password)</p>
+            <p>Both accounts have maxed stats and unlimited resources for testing!</p>
+        </div>
+
+        <div class="demo-links">
+            <a href="/login/" class="demo-link">
+                <h3>🔐 Login to Game</h3>
+                <p>Login with test accounts</p>
+            </a>
+            <a href="/buildings/" class="demo-link">
+                <h3>🏗️ Building Game</h3>
+                <p>Right-click placement system</p>
+            </a>
+            <a href="/game/" class="demo-link">
+                <h3>⚔️ RPG Game</h3>
+                <p>Original RPG interface</p>
+            </a>
+        </div>
+
+        <div class="instructions">
+            <h3>🎮 How to Use Building System:</h3>
+            <ol>
+                <li><strong>Login:</strong> Use admin/admin123 or ray/[password]</li>
+                <li><strong>Go to Buildings:</strong> Visit <a href="/buildings/" style="color: #2ecc71;">/buildings/</a></li>
+                <li><strong>Right-click anywhere on the map</strong> to see context menu</li>
+                <li><strong>Select "Place Building"</strong> from context menu</li>
+                <li><strong>Choose building type and flag color</strong></li>
+                <li><strong>Click "Build Now"</strong> to place the building</li>
+                <li><strong>Click on buildings</strong> to see info or collect revenue</li>
+                <li><strong>Use "Collect All"</strong> button to collect from all buildings</li>
+            </ol>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <h4>🏗️ Building Types</h4>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li>Trading Post</li>
+                    <li>Guard Tower</li>
+                    <li>Market</li>
+                    <li>Bank</li>
+                    <li>Workshop</li>
+                </ul>
+            </div>
+            <div class="feature">
+                <h4>🎨 Flag Colors</h4>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li>8 Basic Colors</li>
+                    <li>6 Premium Colors</li>
+                    <li>Level/Gold Requirements</li>
+                </ul>
+            </div>
+            <div class="feature">
+                <h4>💰 Revenue System</h4>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li>Passive Income</li>
+                    <li>Up to 2500 gold/hour</li>
+                    <li>10 Upgrade Levels</li>
+                </ul>
+            </div>
+            <div class="feature">
+                <h4>⚔️ PvP Features</h4>
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li>Building Attacks</li>
+                    <li>Gold Raiding</li>
+                    <li>HP Damage System</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>🚀 Current Features Working:</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                <div>✅ Right-click context menu</div>
+                <div>✅ Building placement modal</div>
+                <div>✅ Flag color selection</div>
+                <div>✅ Resource validation</div>
+                <div>✅ Revenue generation</div>
+                <div>✅ Building upgrades</div>
+                <div>✅ Multiple building types</div>
+                <div>✅ Custom building names</div>
+                <div>✅ Distance restrictions</div>
+                <div>✅ Database persistence</div>
+                <div>✅ Real-time updates</div>
+                <div>✅ Inventory integration</div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px;">
+            <p><strong>🎯 Ready to test the Parallel Kingdom-style building system!</strong></p>
+            <p>Right-click anywhere on the game map to place buildings</p>
+        </div>
+    </div>
+</body>
+</html>

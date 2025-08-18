@@ -189,6 +189,19 @@
                 {% endif %}
             </div>
             
+            <div class="form-group">
+                <label for="{{ form.flag_color.id_for_label }}">🚩 Flag Color</label>
+                {{ form.flag_color }}
+                {% if form.flag_color.errors %}
+                    <div class="error-list">
+                        {{ form.flag_color.errors }}
+                    </div>
+                {% endif %}
+                {% if form.flag_color.help_text %}
+                    <div class="form-help">{{ form.flag_color.help_text }}</div>
+                {% endif %}
+            </div>
+            
             <button type="submit" class="btn">Create Account</button>
         </form>
         

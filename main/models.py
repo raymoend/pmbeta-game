@@ -69,6 +69,9 @@ class Character(BaseModel):
     # PvP Settings
     pvp_enabled = models.BooleanField(default=True, help_text="Can be attacked by other players")
     
+    # Flag customization
+    flag_color = models.ForeignKey('FlagColor', on_delete=models.SET_NULL, null=True, blank=True, help_text="User's chosen flag color")
+    
     class Meta:
         db_table = 'rpg_characters'
     
@@ -1191,3 +1194,8 @@ class CraftingAttempt(BaseModel):
     
     def __str__(self):
         return f"{self.character.name} crafting {self.recipe.name} ({self.status})"
+
+
+# Import building and flag models to register them with Django
+from .building_models import FlagColor
+from .flag_models import TerritoryFlag, TerritoryZone, FlagRevenueCollection, FlagCombatLog, FlagUpkeepLog

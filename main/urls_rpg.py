@@ -16,6 +16,11 @@ urlpatterns = [
     path('', views_rpg.index, name='index'),
     path('character-creation/', views_rpg.character_creation, name='character_creation'),
     path('game/', views_rpg.rpg_game, name='rpg_game'),
+    path('buildings/', views_rpg.building_game, name='building_game'),
+    path('building-test/', views_rpg.building_test, name='building_test'),
+    path('territories/', views_rpg.territory_manager, name='territory_manager'),
+    path('territories/debug/', views_rpg.territory_debug, name='territory_debug'),
+    path('pk/', views_rpg.pk_game, name='pk_game'),
     
     
     # Authentication (keeping existing auth system)
@@ -29,6 +34,7 @@ urlpatterns = [
     
     # Character API endpoints
     path('api/rpg/character/status/', views_rpg.api_character_status, name='api_character_status'),
+    path('api/rpg/character/relocate/', views_rpg.api_character_relocate, name='api_character_relocate'),
     path('api/rpg/nearby-players/', views_rpg.api_nearby_players, name='api_nearby_players'),
     path('api/rpg/nearby-monsters/', views_rpg.api_nearby_monsters, name='api_nearby_monsters'),
     
@@ -48,3 +54,18 @@ urlpatterns = [
     # Character movement endpoint
     path('api/rpg/character/move/', views_rpg.api_character_move, name='api_character_move'),
 ]
+
+# Import building URLs
+from . import building_views
+
+# Add building API endpoints
+building_patterns = [
+    path('api/building-types/', building_views.api_building_types, name='api_building_types'),
+    path('api/flag-colors/', building_views.api_flag_colors, name='api_flag_colors'),
+    path('api/place-building/', building_views.api_place_building, name='api_place_building'),
+    path('api/nearby-buildings/', building_views.api_nearby_buildings, name='api_nearby_buildings'),
+    path('api/collect-revenue/<uuid:building_id>/', building_views.api_collect_revenue, name='api_collect_revenue'),
+]
+
+# Combine URL patterns
+urlpatterns += building_patterns

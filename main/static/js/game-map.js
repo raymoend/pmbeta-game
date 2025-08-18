@@ -346,7 +346,7 @@ class GameMap {
         if (this.character.lat && this.character.lon) {
             this.map.flyTo({
                 center: [this.character.lon, this.character.lat],
-                zoom: 16,
+                zoom: 15,
                 duration: 1000
             });
         }

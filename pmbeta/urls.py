@@ -10,5 +10,6 @@ urlpatterns = [
     path('', include('main.urls_rpg')),  # Use new RPG system as default
     path('legacy/', include('main.urls')),  # Keep old system for reference
     path('', include('main.urls_crafting')),  # Crafting system endpoints
-    # path('pk/', include('main.pk_urls')),  # Disabled - will implement later
+    path('', include('main.flag_urls')),  # PK-style territory flag system
+    # path('pk/', include('main.pk_urls')),  # Disabled - missing PK models
 ]

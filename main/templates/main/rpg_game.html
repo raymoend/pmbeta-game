@@ -105,6 +105,22 @@
             font-weight: bold;
         }
         
+        .settings-btn {
+            background: rgba(0,0,0,0.2);
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: all 0.3s ease;
+        }
+        
+        .settings-btn:hover {
+            background: rgba(255,255,255,0.2);
+            transform: scale(1.1);
+        }
+        
         /* Main Game Area */
         .game-main {
             flex: 1;
@@ -658,6 +674,9 @@
             <div class="level-gold">
                 <div class="level-display">Level {{ character.level }}</div>
                 <div class="gold-display">{{ character.gold|floatformat:0 }}g</div>
+                <button class="settings-btn" id="settingsBtn" onclick="openSettingsModal()" title="Settings">
+                    ⚙️
+                </button>
             </div>
         </div>
 
@@ -787,6 +806,64 @@
     <!-- Message Area -->
     <div class="message-area" id="messageArea"></div>
 
+    <!-- Settings Modal -->
+    <div class="combat-modal" id="settingsModal" style="display: none;">
+        <div class="combat-container" style="max-width: 400px;">
+            <div class="combat-title">⚙️ Settings</div>
+            <div style="text-align: left; margin: 20px 0;">
+                <button class="btn btn-large" onclick="openRelocateModal()" style="width: 100%; margin-bottom: 10px; background: #3498db; color: white;">
+                    📍 Relocate GPS
+                </button>
+                <button class="btn btn-large" onclick="logout()" style="width: 100%; background: #e74c3c; color: white;">
+                    🚪 Logout
+                </button>
+            </div>
+            <div style="text-align: center;">
+                <button class="btn btn-large btn-defend" onclick="closeSettingsModal()" style="background: #95a5a6;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- GPS Relocate Modal -->
+    <div class="combat-modal" id="relocateModal" style="display: none;">
+        <div class="combat-container" style="max-width: 450px;">
+            <div class="combat-title">📍 GPS Relocation</div>
+            <div style="text-align: left; margin: 20px 0;">
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">Current Location:</label>
+                    <div style="color: #bdc3c7; font-size: 0.9rem;" id="currentLocationDisplay">
+                        {{ character.lat|floatformat:6 }}, {{ character.lon|floatformat:6 }}
+                    </div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label for="newLatitude" style="display: block; margin-bottom: 5px; font-weight: bold;">Latitude:</label>
+                    <input type="number" id="newLatitude" step="0.000001" min="-90" max="90" 
+                           value="{{ character.lat|floatformat:6 }}"
+                           style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: #ecf0f1; color: #2c3e50;">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label for="newLongitude" style="display: block; margin-bottom: 5px; font-weight: bold;">Longitude:</label>
+                    <input type="number" id="newLongitude" step="0.000001" min="-180" max="180" 
+                           value="{{ character.lon|floatformat:6 }}"
+                           style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: #ecf0f1; color: #2c3e50;">
+                </div>
+                <div style="font-size: 0.8rem; color: #f39c12; margin-bottom: 15px;">
+                    ⚠️ Warning: This will instantly teleport your character to the specified coordinates!
+                </div>
+            </div>
+            <div style="text-align: center; display: flex; gap: 10px;">
+                <button class="btn btn-large btn-defend" onclick="closeRelocateModal()" style="flex: 1; background: #95a5a6;">
+                    Cancel
+                </button>
+                <button class="btn btn-large btn-attack" onclick="performRelocate()" style="flex: 1; background: #e67e22;">
+                    🚀 Teleport
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Game State
         let gameState = {
@@ -875,6 +952,9 @@
             
             // Load inventory
             loadInventory();
+            
+            // Load existing flags
+            fetchNearbyFlags();
         }
 
         function fetchNearbyPlayers() {
@@ -897,6 +977,21 @@
                     }
                 })
                 .catch(error => console.error('Error fetching monsters:', error));
+        }
+        
+        function fetchNearbyFlags() {
+            fetch('/api/flags/nearby/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('🚩 Loaded existing flags:', data.flags);
+                        // Add each existing flag to the map
+                        data.flags.forEach(flag => {
+                            addFlagToMap(flag);
+                        });
+                    }
+                })
+                .catch(error => console.error('Error fetching flags:', error));
         }
 
         function updateNearbyPlayers(players) {
@@ -1456,6 +1551,121 @@
 
         window.addEventListener('resize', checkMobile);
         
+        // Settings Modal Functions
+        function openSettingsModal() {
+            const modal = document.getElementById('settingsModal');
+            modal.style.display = 'flex';
+        }
+        
+        function closeSettingsModal() {
+            const modal = document.getElementById('settingsModal');
+            modal.style.display = 'none';
+        }
+        
+        function openRelocateModal() {
+            closeSettingsModal();
+            const modal = document.getElementById('relocateModal');
+            
+            // Update current location display
+            const currentDisplay = document.getElementById('currentLocationDisplay');
+            currentDisplay.textContent = `${gameState.character.lat.toFixed(6)}, ${gameState.character.lon.toFixed(6)}`;
+            
+            // Pre-fill inputs with current location
+            document.getElementById('newLatitude').value = gameState.character.lat.toFixed(6);
+            document.getElementById('newLongitude').value = gameState.character.lon.toFixed(6);
+            
+            modal.style.display = 'flex';
+        }
+        
+        function closeRelocateModal() {
+            const modal = document.getElementById('relocateModal');
+            modal.style.display = 'none';
+        }
+        
+        function performRelocate() {
+            const newLat = parseFloat(document.getElementById('newLatitude').value);
+            const newLon = parseFloat(document.getElementById('newLongitude').value);
+            
+            // Validate coordinates
+            if (isNaN(newLat) || isNaN(newLon)) {
+                showMessage('Invalid coordinates entered!', 'error');
+                return;
+            }
+            
+            if (newLat < -90 || newLat > 90) {
+                showMessage('Latitude must be between -90 and 90', 'error');
+                return;
+            }
+            
+            if (newLon < -180 || newLon > 180) {
+                showMessage('Longitude must be between -180 and 180', 'error');
+                return;
+            }
+            
+            // Calculate distance for user confirmation
+            const distance = calculateDistance(
+                gameState.character.lat, 
+                gameState.character.lon, 
+                newLat, 
+                newLon
+            );
+            
+            const distanceKm = (distance / 1000).toFixed(2);
+            
+            if (distance > 100000) { // 100km
+                if (!confirm(`You are about to teleport ${distanceKm}km away! Are you sure?`)) {
+                    return;
+                }
+            }
+            
+            // Show loading message
+            showMessage('Teleporting...', 'info');
+            
+            // Perform the relocation via API
+            fetch('/api/rpg/character/relocate/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ lat: newLat, lon: newLon })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update game state
+                    gameState.character.lat = data.location.lat;
+                    gameState.character.lon = data.location.lon;
+                    
+                    // Update map center and player marker
+                    gameState.map.setCenter([data.location.lon, data.location.lat]);
+                    if (playerMarker) {
+                        playerMarker.setLngLat([data.location.lon, data.location.lat]);
+                    }
+                    
+                    // Close modal and show success message
+                    closeRelocateModal();
+                    showMessage(`Teleported ${(data.distance_moved / 1000).toFixed(2)}km! Welcome to your new location.`, 'success');
+                    
+                    // Refresh nearby data
+                    loadGameData();
+                } else {
+                    showMessage(data.error || 'Failed to relocate character', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error relocating character:', error);
+                showMessage('Failed to teleport. Please try again.', 'error');
+            });
+        }
+        
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                // Redirect to logout URL
+                window.location.href = '/logout/';
+            }
+        }
+        
         // Add CSRF token to all requests
         document.addEventListener('DOMContentLoaded', function() {
             const csrfToken = '{{ csrf_token }}';
@@ -1471,6 +1681,286 @@
             input.value = csrfToken;
             document.body.appendChild(input);
         });
+        
+        // ============================================
+        // FLAG SYSTEM INTEGRATION
+        // ============================================
+        
+        // Simple test to check right-click detection
+        alert('Flag system test: JavaScript is working!');
+        console.log('🚩 Flag system starting...');
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🚩 DOM ready, setting up flag system');
+            
+            // Test if we can find the map element
+            const mapElement = document.getElementById('map');
+            console.log('🚩 Found map element:', mapElement);
+            
+            // Add right-click detector to the map
+            if (mapElement) {
+                mapElement.addEventListener('contextmenu', function(e) {
+                    console.log('🚩 Right-click detected on map!');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Show flag placement dialog
+                    showFlagPlacementDialog(e.clientX, e.clientY);
+                    return false;
+                });
+                
+                console.log('🚩 Right-click listener added to map');
+            } else {
+                console.error('🚩 Could not find map element');
+            }
+        });
+        
+        function showFlagPlacementDialog(x, y) {
+            // Get coordinates from map click
+            const mapCenter = gameState.map.getCenter();
+            const lat = mapCenter.lat;
+            const lng = mapCenter.lng;
+            
+            // Create modal dialog
+            const modal = document.createElement('div');
+            modal.className = 'flag-placement-modal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 20000;
+            `;
+            
+            modal.innerHTML = `
+                <div style="background: #2d3748; border-radius: 12px; padding: 20px; max-width: 400px; width: 90%; color: white;">
+                    <h3 style="margin: 0 0 20px 0; color: #f7fafc;">🚩 Place New Flag</h3>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; color: #a0aec0;">Flag Name:</label>
+                        <input type="text" id="flag-name" value="My Flag" maxlength="20" 
+                               style="width: 100%; padding: 8px; border: none; border-radius: 4px; background: #4a5568; color: white;">
+                    </div>
+                    
+                    <div style="margin-bottom: 20px; padding: 10px; background: #4a5568; border-radius: 4px; font-size: 14px;">
+                        <strong>Cost:</strong> 500 gold, 20 wood, 10 stone<br>
+                        <strong>Location:</strong> ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
+                        <strong>Territory Radius:</strong> 200 meters<br>
+                        <em>Your flag will use your chosen account color</em>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button id="flag-cancel" style="padding: 10px 20px; background: #718096; border: none; border-radius: 4px; color: white; cursor: pointer;">
+                            Cancel
+                        </button>
+                        <button id="flag-place" style="padding: 10px 20px; background: #38a169; border: none; border-radius: 4px; color: white; cursor: pointer;">
+                            Place Flag
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Handle buttons
+            modal.querySelector('#flag-cancel').addEventListener('click', () => {
+                document.body.removeChild(modal);
+            });
+            
+            modal.querySelector('#flag-place').addEventListener('click', () => {
+                const name = modal.querySelector('#flag-name').value.trim() || 'My Flag';
+                document.body.removeChild(modal);
+                placeFlag(lat, lng, name);
+            });
+            
+            // Close on background click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                }
+            });
+        }
+        
+        async function placeFlag(lat, lng, name) {
+            try {
+                console.log(`🚩 Placing flag "${name}" at ${lat}, ${lng}`);
+                
+                const response = await fetch('/api/flags/place/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        lat: lat,
+                        lon: lng,
+                        custom_name: name
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('🚩 Flag placed successfully:', data);
+                    showMessage(data.message, 'success');
+                    
+                    // Add flag marker to map
+                    addFlagToMap(data.flag);
+                } else {
+                    console.error('❌ Failed to place flag:', data.error);
+                    showMessage(data.error, 'error');
+                }
+            } catch (error) {
+                console.error('❌ Error placing flag:', error);
+                showMessage('Failed to place flag. Please try again.', 'error');
+            }
+        }
+        
+        function addFlagToMap(flag) {
+            // Use flag color from API response or default to red
+            const flagColor = flag.flag_color?.hex_color || '#ff4444';
+            
+            // Create flag marker element
+            const flagElement = document.createElement('div');
+            flagElement.style.cssText = `
+                width: 30px;
+                height: 30px;
+                background: ${flagColor};
+                border: 3px solid ${flag.is_mine ? '#fff' : '#000'};
+                border-radius: 50% 50% 50% 0;
+                transform: rotate(-45deg);
+                cursor: pointer;
+                position: relative;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            `;
+            
+            // Add level indicator
+            const levelIndicator = document.createElement('div');
+            levelIndicator.textContent = flag.level || '1';
+            levelIndicator.style.cssText = `
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%) rotate(45deg);
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                text-shadow: 1px 1px 1px rgba(0,0,0,0.8);
+            `;
+            flagElement.appendChild(levelIndicator);
+            
+            // Create Mapbox marker
+            const marker = new mapboxgl.Marker(flagElement)
+                .setLngLat([flag.lon, flag.lat])
+                .addTo(gameState.map);
+            
+            // Add PK-style territory radius circle
+            addFlagTerritoryRadius(flag, flagColor);
+        }
+        
+        function addFlagTerritoryRadius(flag, flagColor) {
+            console.log('🚩 Adding territory radius for flag:', flag, 'color:', flagColor);
+            
+            const radiusMeters = flag.radius_meters || 200;
+            console.log('🚩 Radius in meters:', radiusMeters);
+            
+            // Convert radius from meters to degrees (approximate)
+            const radiusDegrees = radiusMeters / 111320; // 1 degree ≈ 111.32km
+            console.log('🚩 Radius in degrees:', radiusDegrees);
+            
+            // Create circle geometry with multiple points for smooth circle
+            const center = [flag.lon, flag.lat];
+            console.log('🚩 Flag center:', center);
+            
+            const points = [];
+            const numPoints = 64; // More points for smoother circle
+            
+            for (let i = 0; i < numPoints; i++) {
+                const angle = (i / numPoints) * 2 * Math.PI;
+                const x = center[0] + radiusDegrees * Math.cos(angle);
+                const y = center[1] + radiusDegrees * Math.sin(angle);
+                points.push([x, y]);
+            }
+            points.push(points[0]); // Close the circle
+            
+            console.log('🚩 Created', points.length, 'points for circle');
+            
+            const sourceId = `flag-territory-${flag.id || Date.now()}`;
+            console.log('🚩 Source ID:', sourceId);
+            
+            // Create GeoJSON source for the territory circle
+            const territorySource = {
+                'type': 'geojson',
+                'data': {
+                    'type': 'Feature',
+                    'geometry': {
+                        'type': 'Polygon',
+                        'coordinates': [points]
+                    },
+                    'properties': {
+                        'flag_id': flag.id,
+                        'owner': flag.owner || 'Unknown',
+                        'color': flagColor
+                    }
+                }
+            };
+            
+            console.log('🚩 Territory source:', territorySource);
+            
+            // Check if map is loaded
+            if (!gameState.map) {
+                console.error('🚩 Map not loaded yet!');
+                return;
+            }
+            
+            // Only add if source doesn't exist
+            if (!gameState.map.getSource(sourceId)) {
+                console.log('🚩 Adding source and layers to map...');
+                
+                try {
+                    gameState.map.addSource(sourceId, territorySource);
+                    console.log('🚩 Source added successfully');
+                    
+                    // Add fill layer (like PK territorial control)
+                    gameState.map.addLayer({
+                        'id': `${sourceId}-fill`,
+                        'type': 'fill',
+                        'source': sourceId,
+                        'paint': {
+                            'fill-color': flagColor,
+                            'fill-opacity': 0.15  // Semi-transparent like PK
+                        }
+                    });
+                    console.log('🚩 Fill layer added successfully');
+                    
+                    // Add border line (more visible border like PK)
+                    gameState.map.addLayer({
+                        'id': `${sourceId}-line`,
+                        'type': 'line',
+                        'source': sourceId,
+                        'paint': {
+                            'line-color': flagColor,
+                            'line-width': 2,
+                            'line-opacity': 0.6
+                        }
+                    });
+                    console.log('🚩 Line layer added successfully');
+                    
+                } catch (error) {
+                    console.error('🚩 Error adding territory layers:', error);
+                }
+            } else {
+                console.log('🚩 Source already exists, skipping');
+            }
+        }
+        
+        console.log('🚩 Flag system loaded');
     </script>
 </body>
 </html>

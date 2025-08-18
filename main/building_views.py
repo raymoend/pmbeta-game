@@ -1,0 +1,383 @@
+"""
+Building System Views
+API endpoints for building placement, management, and interaction
+"""
+from django.shortcuts import render
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+from django.db import transaction
+from django.core.exceptions import ValidationError
+import json
+import uuid
+
+from .models import Character
+from .building_models import BuildingType, FlagColor, PlayerBuilding, BuildingTemplate
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_building_types(request):
+    """Get available building types for construction"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        building_types = []
+        for building_type in BuildingType.objects.filter(is_active=True):
+            building_types.append({
+                'id': str(building_type.id),
+                'name': building_type.name,
+                'description': building_type.description,
+                'category': building_type.category,
+                'cost': {
+                    'gold': building_type.base_cost_gold,
+                    'wood': building_type.base_cost_wood,
+                    'stone': building_type.base_cost_stone,
+                },
+                'revenue_per_hour': building_type.base_revenue_per_hour,
+                'max_revenue_per_hour': building_type.max_revenue_per_hour,
+                'max_level': building_type.max_level,
+                'construction_time_minutes': building_type.construction_time_minutes,
+                'icon_name': building_type.icon_name,
+                'can_afford': (
+                    character.gold >= building_type.base_cost_gold and
+                    character.inventory.filter(item_template__name='wood', quantity__gte=building_type.base_cost_wood).exists() and
+                    character.inventory.filter(item_template__name='stone', quantity__gte=building_type.base_cost_stone).exists()
+                )
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'building_types': building_types
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_flag_colors(request):
+    """Get available flag colors for player"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        flag_colors = []
+        for color in FlagColor.objects.filter(is_active=True):
+            can_use = True
+            if color.is_premium:
+                can_use = (
+                    character.level >= color.unlock_level and
+                    character.gold >= color.unlock_cost
+                )
+            
+            flag_colors.append({
+                'id': str(color.id),
+                'name': color.name,
+                'hex_color': color.hex_color,
+                'display_name': color.display_name,
+                'is_premium': color.is_premium,
+                'unlock_level': color.unlock_level,
+                'unlock_cost': color.unlock_cost,
+                'can_use': can_use
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'flag_colors': flag_colors
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+
+
+@login_required
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_place_building(request):
+    """Place a new building at specified coordinates"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        data = json.loads(request.body)
+        building_type_id = data.get('building_type_id')
+        lat = float(data.get('lat'))
+        lon = float(data.get('lon'))
+        flag_color_id = data.get('flag_color_id')
+        custom_name = data.get('custom_name', '').strip()
+        
+        # Validate inputs
+        if not building_type_id or not lat or not lon:
+            return JsonResponse({
+                'success': False,
+                'error': 'Missing required parameters'
+            }, status=400)
+        
+        # Get building type
+        try:
+            building_type = BuildingType.objects.get(id=building_type_id, is_active=True)
+        except BuildingType.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid building type'
+            }, status=400)
+        
+        # Get flag color if provided
+        flag_color = None
+        if flag_color_id:
+            try:
+                flag_color = FlagColor.objects.get(id=flag_color_id, is_active=True)
+                # Check if player can use this color
+                if flag_color.is_premium:
+                    if character.level < flag_color.unlock_level:
+                        return JsonResponse({
+                            'success': False,
+                            'error': f'Requires level {flag_color.unlock_level} to use {flag_color.display_name}'
+                        }, status=400)
+            except FlagColor.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid flag color'
+                }, status=400)
+        
+        # Check if location is already occupied
+        if PlayerBuilding.objects.filter(lat=lat, lon=lon).exists():
+            return JsonResponse({
+                'success': False,
+                'error': 'Location already occupied by another building'
+            }, status=400)
+        
+        # Check distance from player (optional - prevent building too far away)
+        distance = character.distance_to(lat, lon)
+        max_building_distance = 1000  # 1km max distance
+        if distance > max_building_distance:
+            return JsonResponse({
+                'success': False,
+                'error': f'Cannot build more than {max_building_distance}m from your location'
+            }, status=400)
+        
+        with transaction.atomic():
+            # Check resources
+            if character.gold < building_type.base_cost_gold:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Need {building_type.base_cost_gold} gold (have {character.gold})'
+                }, status=400)
+            
+            # Check wood
+            try:
+                wood_item = character.inventory.get(item_template__name='wood')
+                if wood_item.quantity < building_type.base_cost_wood:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Need {building_type.base_cost_wood} wood (have {wood_item.quantity})'
+                    }, status=400)
+            except:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Need {building_type.base_cost_wood} wood (have 0)'
+                }, status=400)
+            
+            # Check stone
+            try:
+                stone_item = character.inventory.get(item_template__name='stone')
+                if stone_item.quantity < building_type.base_cost_stone:
+                    return JsonResponse({
+                        'success': False,
+                        'error': f'Need {building_type.base_cost_stone} stone (have {stone_item.quantity})'
+                    }, status=400)
+            except:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Need {building_type.base_cost_stone} stone (have 0)'
+                }, status=400)
+            
+            # Deduct resources
+            character.gold -= building_type.base_cost_gold
+            character.save()
+            
+            # Deduct wood
+            wood_item.quantity -= building_type.base_cost_wood
+            if wood_item.quantity <= 0:
+                wood_item.delete()
+            else:
+                wood_item.save()
+            
+            # Deduct stone
+            stone_item.quantity -= building_type.base_cost_stone
+            if stone_item.quantity <= 0:
+                stone_item.delete()
+            else:
+                stone_item.save()
+            
+            # Create building
+            building = PlayerBuilding.objects.create(
+                owner=character,
+                building_type=building_type,
+                lat=lat,
+                lon=lon,
+                flag_color=flag_color,
+                custom_name=custom_name or building_type.name,
+                status='constructing',
+                level=1,
+                current_hp=100,
+                max_hp=100
+            )
+            
+            return JsonResponse({
+                'success': True,
+                'message': f'{building_type.name} construction started!',
+                'building': {
+                    'id': str(building.id),
+                    'name': building.custom_name or building.building_type.name,
+                    'type': building.building_type.name,
+                    'lat': building.lat,
+                    'lon': building.lon,
+                    'level': building.level,
+                    'status': building.status,
+                    'construction_time_minutes': building_type.construction_time_minutes,
+                    'flag_color': {
+                        'name': flag_color.display_name if flag_color else None,
+                        'hex_color': flag_color.hex_color if flag_color else '#FFFFFF'
+                    }
+                }
+            })
+            
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_nearby_buildings(request):
+    """Get buildings near player location"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        # Get radius from query params (default 1000m)
+        radius_km = float(request.GET.get('radius', 1.0))
+        radius_degrees = radius_km / 111.0  # Rough conversion
+        
+        # Find nearby buildings
+        nearby_buildings = PlayerBuilding.objects.filter(
+            lat__range=(character.lat - radius_degrees, character.lat + radius_degrees),
+            lon__range=(character.lon - radius_degrees, character.lon + radius_degrees)
+        ).select_related('owner', 'building_type', 'flag_color')
+        
+        buildings_data = []
+        for building in nearby_buildings:
+            # Check if construction is complete
+            building.is_construction_complete()
+            
+            distance = character.distance_to(building.lat, building.lon)
+            
+            buildings_data.append({
+                'id': str(building.id),
+                'name': building.custom_name or building.building_type.name,
+                'type': building.building_type.name,
+                'category': building.building_type.category,
+                'owner': building.owner.name,
+                'is_own': building.owner == character,
+                'lat': building.lat,
+                'lon': building.lon,
+                'level': building.level,
+                'status': building.status,
+                'distance_meters': round(distance),
+                'revenue_per_hour': building.get_current_revenue_rate(),
+                'flag_color': {
+                    'name': building.flag_color.display_name if building.flag_color else None,
+                    'hex_color': building.flag_color.hex_color if building.flag_color else '#FFFFFF'
+                },
+                'hp': {
+                    'current': building.current_hp,
+                    'max': building.max_hp
+                }
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'buildings': buildings_data,
+            'player_location': {
+                'lat': character.lat,
+                'lon': character.lon
+            }
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@login_required
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_collect_revenue(request, building_id):
+    """Collect revenue from a building"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        # Get building
+        try:
+            building = PlayerBuilding.objects.get(id=building_id, owner=character)
+        except PlayerBuilding.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Building not found or not owned by you'
+            }, status=404)
+        
+        # Collect revenue
+        revenue_collected = building.collect_revenue()
+        
+        return JsonResponse({
+            'success': True,
+            'revenue_collected': revenue_collected,
+            'message': f'Collected {revenue_collected} gold!' if revenue_collected > 0 else 'No revenue to collect',
+            'building': {
+                'id': str(building.id),
+                'name': building.custom_name or building.building_type.name,
+                'total_revenue_generated': building.total_revenue_generated,
+                'current_revenue_rate': building.get_current_revenue_rate()
+            },
+            'player': {
+                'gold': character.gold
+            }
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)

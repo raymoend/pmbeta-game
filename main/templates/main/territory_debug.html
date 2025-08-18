@@ -1,0 +1,75 @@
+{% extends 'main/base.html' %}
+
+{% block title %}Territory Debug - PMBeta{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-dark text-white">
+                <div class="card-header">
+                    <h4><i class="fas fa-bug"></i> Territory Manager Debug</h4>
+                </div>
+                <div class="card-body">
+                    <h5>System Status:</h5>
+                    <ul class="list-unstyled">
+                        {% for info in debug_info %}
+                        <li class="mb-1">
+                            {% if "✅" in info %}
+                                <span class="text-success">{{ info }}</span>
+                            {% elif "❌" in info %}
+                                <span class="text-danger">{{ info }}</span>
+                            {% elif "⚠️" in info %}
+                                <span class="text-warning">{{ info }}</span>
+                            {% else %}
+                                <span class="text-info">{{ info }}</span>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    
+                    <hr>
+                    
+                    <div class="mt-4">
+                        <h5>Actions:</h5>
+                        <a href="{{ territory_url }}" class="btn btn-primary me-2">
+                            <i class="fas fa-flag"></i> Go to Territory Manager
+                        </a>
+                        <button onclick="location.reload()" class="btn btn-secondary me-2">
+                            <i class="fas fa-sync-alt"></i> Refresh Debug
+                        </button>
+                        <a href="{% url 'rpg_game' %}" class="btn btn-outline-light">
+                            <i class="fas fa-home"></i> Back to Game
+                        </a>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="mt-4">
+                        <h5>Quick Links:</h5>
+                        <ul>
+                            <li><a href="http://127.0.0.1:8000/territories/" class="text-primary">Territory Manager</a></li>
+                            <li><a href="http://127.0.0.1:8000/territories/debug/" class="text-info">This Debug Page</a></li>
+                            <li><a href="http://127.0.0.1:8000/api/flags/nearby/?radius=10" class="text-warning">Territory API Test</a></li>
+                            <li><a href="http://127.0.0.1:8000/game/" class="text-success">RPG Game</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <h5>Browser Console Check:</h5>
+                        <p class="text-muted">
+                            If the Territory Manager isn't loading:
+                        </p>
+                        <ol class="text-muted">
+                            <li>Press <kbd>F12</kbd> to open browser developer tools</li>
+                            <li>Go to the <strong>Console</strong> tab</li>
+                            <li>Look for any red error messages</li>
+                            <li>Try navigating to the Territory Manager and watch for errors</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

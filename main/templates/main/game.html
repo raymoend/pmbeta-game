@@ -227,6 +227,49 @@
             <div id="flag-info-content"></div>
         </div>
         
+        <!-- Flag Building Popup -->
+        <div id="flag-build-popup" style="position: absolute; background: rgba(0, 0, 0, 0.95); color: white; padding: 20px; border-radius: 12px; pointer-events: auto; backdrop-filter: blur(15px); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); border: 2px solid #4CAF50; display: none; z-index: 6000; min-width: 350px; max-width: 400px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;">
+                <h3 style="margin: 0; color: #4CAF50;">🏁 Build Territory Flag</h3>
+                <button onclick="closeFlagBuildPopup()" style="background: none; border: none; color: #ff4444; font-size: 20px; cursor: pointer; padding: 0; line-height: 1;">×</button>
+            </div>
+            
+            <div id="flag-build-content">
+                <div style="margin-bottom: 15px;">
+                    <div><strong>📍 Location:</strong> <span id="build-location">0.0000, 0.0000</span></div>
+                    <div id="build-location-status" style="margin-top: 5px; font-size: 12px;"></div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <div style="margin-bottom: 8px;"><strong>💰 Cost:</strong></div>
+                    <div style="margin-left: 10px; font-size: 14px;">
+                        <div>• 500 Gold</div>
+                        <div>• 20 Wood</div>
+                        <div>• 10 Stone</div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px;"><strong>🏷️ Flag Name:</strong></label>
+                    <input type="text" id="flag-name-input" placeholder="My Territory" maxlength="50" style="width: 100%; padding: 8px; border: none; border-radius: 4px; background: rgba(255, 255, 255, 0.1); color: white; box-sizing: border-box;">
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 8px;"><strong>🎨 Flag Color:</strong></label>
+                    <div id="flag-color-selector" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        <!-- Colors will be loaded here -->
+                    </div>
+                </div>
+                
+                <div id="flag-build-error" style="color: #ff4444; font-size: 12px; margin-bottom: 15px; display: none;"></div>
+                
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="buildFlag()" id="build-flag-btn" style="flex: 1; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s;">Build Flag</button>
+                    <button onclick="closeFlagBuildPopup()" style="padding: 12px 16px; background: #666; color: white; border: none; border-radius: 6px; cursor: pointer;">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
         <!-- Movement Indicator -->
         <div id="movement-indicator" class="movement-indicator" style="display: none;">
             Moving...
@@ -342,11 +385,16 @@
                 
                 // Enhanced entity detection with radius
                 if (!checkForEntityClickWithRadius(e.point, clickDetectionRadius)) {
-                    // Show visual feedback for click
-                    showClickFeedback(e.lngLat);
-                    
-                    // Send move command
-                    sendMoveCommand(clickedLat, clickedLon);
+                    // Check if we should show flag building popup instead of moving
+                    if (shouldShowFlagBuildingPopup(clickedLat, clickedLon)) {
+                        showFlagBuildPopup(clickedLat, clickedLon, e.point);
+                    } else {
+                        // Show visual feedback for click
+                        showClickFeedback(e.lngLat);
+                        
+                        // Send move command
+                        sendMoveCommand(clickedLat, clickedLon);
+                    }
                 }
             });
             
@@ -2211,6 +2259,288 @@
         function hideEntityInfo() {
             document.getElementById('entity-info').style.display = 'none';
         }
+        
+        // ===============================
+        // FLAG BUILDING POPUP FUNCTIONS
+        // ===============================
+        
+        let flagBuildCoords = null;
+        let selectedFlagColor = '#ff4444'; // Default red flag color
+        
+        // Check if we should show flag building popup instead of moving
+        function shouldShowFlagBuildingPopup(lat, lon) {
+            // Only show if player is close to the location (within 50m)
+            const distance = calculateDistance(currentPlayer.lat, currentPlayer.lon, lat, lon);
+            if (distance > 50) {
+                return false; // Too far, just move normally
+            }
+            
+            // Check if there are no entities at this location
+            const nearbyEntities = Object.values(gameEntities).filter(entity => {
+                const entityDistance = calculateDistance(lat, lon, entity.lat, entity.lon);
+                return entityDistance <= 25; // 25m radius
+            });
+            
+            // Only show popup if no entities nearby and player has minimum requirements
+            return nearbyEntities.length === 0 && currentPlayer.cash >= 500;
+        }
+        
+        // Show flag building popup
+        function showFlagBuildPopup(lat, lon, screenPoint) {
+            flagBuildCoords = { lat, lon };
+            
+            const popup = document.getElementById('flag-build-popup');
+            const locationSpan = document.getElementById('build-location');
+            const statusDiv = document.getElementById('build-location-status');
+            
+            // Update location display
+            locationSpan.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+            
+            // Check if location is suitable for flag building
+            const canBuild = checkFlagBuildRequirements(lat, lon);
+            if (canBuild.allowed) {
+                statusDiv.innerHTML = '<span style="color: #4CAF50;">✓ Good location for flag</span>';
+                document.getElementById('build-flag-btn').disabled = false;
+            } else {
+                statusDiv.innerHTML = `<span style="color: #ff4444;">✗ ${canBuild.reason}</span>`;
+                document.getElementById('build-flag-btn').disabled = true;
+            }
+            
+            // Load flag color options
+            loadFlagColorOptions();
+            
+            // Position popup near click location
+            const rect = map.getCanvas().getBoundingClientRect();
+            popup.style.left = Math.min(screenPoint.x + rect.left + 20, window.innerWidth - 400) + 'px';
+            popup.style.top = Math.min(screenPoint.y + rect.top - 100, window.innerHeight - 300) + 'px';
+            
+            // Show popup
+            popup.style.display = 'block';
+            
+            // Focus on flag name input
+            setTimeout(() => {
+                document.getElementById('flag-name-input').focus();
+            }, 100);
+            
+            // Close on outside click
+            setTimeout(() => {
+                document.addEventListener('click', handleOutsideClickForFlagPopup, { once: true });
+            }, 100);
+        }
+        
+        // Check flag building requirements
+        function checkFlagBuildRequirements(lat, lon) {
+            // Check player resources
+            if (currentPlayer.cash < 500) {
+                return { allowed: false, reason: 'Need 500 gold' };
+            }
+            
+            // Check minimum distance from other flags (100m)
+            for (const flagId in flagMarkers) {
+                const flag = gameEntities[flagId];
+                if (flag) {
+                    const distance = calculateDistance(lat, lon, flag.lat, flag.lon);
+                    if (distance < 100) {
+                        return { allowed: false, reason: 'Too close to existing flag (need 100m separation)' };
+                    }
+                }
+            }
+            
+            // Check not too close to other entities
+            const nearbyEntities = Object.values(gameEntities).filter(entity => {
+                if (entity.flag_type) return false; // Skip flags (already checked above)
+                const distance = calculateDistance(lat, lon, entity.lat, entity.lon);
+                return distance < 25; // 25m radius
+            });
+            
+            if (nearbyEntities.length > 0) {
+                return { allowed: false, reason: 'Too close to other structures' };
+            }
+            
+            return { allowed: true };
+        }
+        
+        // Load flag color options
+        function loadFlagColorOptions() {
+            const colorSelector = document.getElementById('flag-color-selector');
+            
+            const colors = [
+                { name: 'Red', value: '#ff4444' },
+                { name: 'Blue', value: '#4444ff' },
+                { name: 'Green', value: '#44ff44' },
+                { name: 'Yellow', value: '#ffff44' },
+                { name: 'Purple', value: '#ff44ff' },
+                { name: 'Orange', value: '#ff8800' },
+                { name: 'Cyan', value: '#44ffff' },
+                { name: 'Pink', value: '#ff88cc' }
+            ];
+            
+            colorSelector.innerHTML = colors.map(color => `
+                <div 
+                    onclick="selectFlagColor('${color.value}')" 
+                    style="
+                        width: 32px;
+                        height: 32px;
+                        background-color: ${color.value};
+                        border: 3px solid ${selectedFlagColor === color.value ? '#FFD700' : '#666'};
+                        border-radius: 6px;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: white;
+                        font-weight: bold;
+                        text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+                    "
+                    title="${color.name}"
+                    onmouseover="this.style.transform='scale(1.1)'"
+                    onmouseout="this.style.transform='scale(1)'"
+                >
+                    🏁
+                </div>
+            `).join('');
+        }
+        
+        // Select flag color
+        function selectFlagColor(color) {
+            selectedFlagColor = color;
+            loadFlagColorOptions(); // Refresh to show selection
+        }
+        
+        // Build flag
+        function buildFlag() {
+            if (!flagBuildCoords) {
+                showFlagBuildError('Invalid location');
+                return;
+            }
+            
+            const flagName = document.getElementById('flag-name-input').value.trim();
+            if (!flagName) {
+                showFlagBuildError('Flag name is required');
+                return;
+            }
+            
+            if (flagName.length < 3) {
+                showFlagBuildError('Flag name must be at least 3 characters');
+                return;
+            }
+            
+            if (flagName.length > 50) {
+                showFlagBuildError('Flag name too long (max 50 characters)');
+                return;
+            }
+            
+            // Double-check requirements
+            const canBuild = checkFlagBuildRequirements(flagBuildCoords.lat, flagBuildCoords.lon);
+            if (!canBuild.allowed) {
+                showFlagBuildError(canBuild.reason);
+                return;
+            }
+            
+            // Disable button and show building state
+            const buildBtn = document.getElementById('build-flag-btn');
+            buildBtn.disabled = true;
+            buildBtn.textContent = 'Building...';
+            
+            // Send build request
+            fetch('/api/flags/place/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    lat: flagBuildCoords.lat,
+                    lon: flagBuildCoords.lon,
+                    name: flagName,
+                    color: selectedFlagColor,
+                    flag_type: 'territory'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Success!
+                    addChatMessage({
+                        username: 'System',
+                        message: `🏁 Flag "${flagName}" built successfully! Cost: 500 gold, 20 wood, 10 stone`
+                    });
+                    
+                    // Update player resources
+                    currentPlayer.cash -= 500;
+                    document.getElementById('cash').textContent = currentPlayer.cash.toLocaleString();
+                    
+                    // Close popup
+                    closeFlagBuildPopup();
+                    
+                    // Refresh flags to show new one
+                    setTimeout(() => {
+                        loadFlags();
+                    }, 500);
+                    
+                } else {
+                    showFlagBuildError(data.error || 'Failed to build flag');
+                    buildBtn.disabled = false;
+                    buildBtn.textContent = 'Build Flag';
+                }
+            })
+            .catch(error => {
+                console.error('Flag building error:', error);
+                showFlagBuildError('Network error - check connection');
+                buildBtn.disabled = false;
+                buildBtn.textContent = 'Build Flag';
+            });
+        }
+        
+        // Show flag build error
+        function showFlagBuildError(message) {
+            const errorDiv = document.getElementById('flag-build-error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            
+            // Hide error after 5 seconds
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+        
+        // Close flag build popup
+        function closeFlagBuildPopup() {
+            const popup = document.getElementById('flag-build-popup');
+            popup.style.display = 'none';
+            
+            // Reset form
+            document.getElementById('flag-name-input').value = '';
+            document.getElementById('flag-build-error').style.display = 'none';
+            selectedFlagColor = '#ff4444';
+            flagBuildCoords = null;
+            
+            // Re-enable build button
+            const buildBtn = document.getElementById('build-flag-btn');
+            buildBtn.disabled = false;
+            buildBtn.textContent = 'Build Flag';
+        }
+        
+        // Handle outside click for flag popup
+        function handleOutsideClickForFlagPopup(e) {
+            const popup = document.getElementById('flag-build-popup');
+            if (popup && !popup.contains(e.target)) {
+                closeFlagBuildPopup();
+            }
+        }
+        
+        // Handle Enter key in flag name input
+        document.addEventListener('DOMContentLoaded', function() {
+            const flagNameInput = document.getElementById('flag-name-input');
+            if (flagNameInput) {
+                flagNameInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        buildFlag();
+                    }
+                });
+            }
+        });
         
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', function() {

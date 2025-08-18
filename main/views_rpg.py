@@ -119,12 +119,34 @@ def character_creation(request):
             start_lat = 41.0646633  # Cleveland area
             start_lon = -80.6391736
         
+        # Get flag color from session (set during registration)
+        flag_color_id = request.session.get('chosen_flag_color_id')
+        flag_color = None
+        if flag_color_id:
+            try:
+                from .building_models import FlagColor
+                flag_color = FlagColor.objects.get(id=flag_color_id, is_active=True)
+            except FlagColor.DoesNotExist:
+                pass
+        
+        # If no flag color selected, use red as default
+        if not flag_color:
+            from .building_models import FlagColor
+            try:
+                flag_color = FlagColor.objects.filter(
+                    hex_color='#ff0000',  # Red color
+                    is_active=True
+                ).first()
+            except:
+                pass
+        
         # Create character
         character = Character.objects.create(
             user=request.user,
             name=character_name,
             lat=start_lat,
-            lon=start_lon
+            lon=start_lon,
+            flag_color=flag_color
         )
         
         # Calculate derived stats
@@ -182,9 +204,228 @@ def rpg_game(request):
     return render(request, 'main/rpg_game.html', context)
 
 
+@login_required
+def territory_manager(request):
+    """Territory Manager view - Parallel Kingdom style territory management"""
+    try:
+        character = Character.objects.get(user=request.user)
+    except Character.DoesNotExist:
+        messages.error(request, 'Character not found. Please create a character first.')
+        return redirect('character_creation')
+    
+    # Update character's online status
+    character.is_online = True
+    character.save(update_fields=['is_online', 'last_activity'])
+    
+    # Get game settings safely
+    try:
+        game_settings = settings.GAME_SETTINGS
+    except AttributeError:
+        # Fallback game settings
+        game_settings = {
+            'MAPBOX_ACCESS_TOKEN': 'pk.eyJ1IjoiamFsbGk5NiIsImEiOiJjbWU3eW9tZnUwOWJuMnJvcmJrN242OGloIn0.0OSOw3J1cDB45AIRS_mEbA',
+            'MAPBOX_STYLE': 'mapbox://styles/mapbox/dark-v11',
+            'ZOOM_LEVEL': 15
+        }
+    
+    context = {
+        'character': character,
+        'MAPBOX_ACCESS_TOKEN': game_settings.get('MAPBOX_ACCESS_TOKEN'),
+        'MAPBOX_STYLE': game_settings.get('MAPBOX_STYLE', 'mapbox://styles/mapbox/dark-v11'),
+        'ZOOM_LEVEL': game_settings.get('ZOOM_LEVEL', 15),
+    }
+    
+    return render(request, 'main/territory_manager.html', context)
+
+
+@login_required
+def territory_debug(request):
+    """Debug view to help troubleshoot territory manager issues"""
+    debug_info = []
+    
+    # Check character
+    try:
+        character = Character.objects.get(user=request.user)
+        debug_info.append(f'✅ Character found: {character.name} (Level {character.level})')
+        debug_info.append(f'   Location: ({character.lat:.6f}, {character.lon:.6f})')
+        debug_info.append(f'   Gold: {character.gold}')
+    except Character.DoesNotExist:
+        debug_info.append('❌ No character found - you need to create one first!')
+        return redirect('character_creation')
+    
+    # Check territories
+    try:
+        from .flag_models import TerritoryFlag
+        territories = TerritoryFlag.objects.filter(owner=character)
+        debug_info.append(f'🏴 Your territories: {territories.count()}')
+        for territory in territories:
+            debug_info.append(f'   • {territory.custom_name or "Unnamed"} at ({territory.lat:.6f}, {territory.lon:.6f}) - {territory.status}')
+        
+        all_territories = TerritoryFlag.objects.all()
+        debug_info.append(f'🌍 Total territories in database: {all_territories.count()}')
+    except Exception as e:
+        debug_info.append(f'❌ Territory error: {e}')
+    
+    # Check static files
+    import os
+    css_file = os.path.join('main', 'static', 'css', 'territory-manager.css')
+    js_file = os.path.join('main', 'static', 'js', 'territory-manager.js')
+    
+    if os.path.exists(css_file):
+        debug_info.append('✅ CSS file found: territory-manager.css')
+    else:
+        debug_info.append('❌ Missing CSS file: territory-manager.css')
+    
+    if os.path.exists(js_file):
+        debug_info.append('✅ JS file found: territory-manager.js')
+    else:
+        debug_info.append('❌ Missing JS file: territory-manager.js')
+    
+    # Check game settings
+    try:
+        game_settings = settings.GAME_SETTINGS
+        debug_info.append('✅ Game settings found')
+        debug_info.append(f'   Mapbox token: {game_settings.get("MAPBOX_ACCESS_TOKEN", "Not found")[:20]}...')
+    except:
+        debug_info.append('⚠️ Using fallback game settings')
+    
+    context = {
+        'debug_info': debug_info,
+        'character': character,
+        'territory_url': '/territories/',
+    }
+    
+    return render(request, 'main/territory_debug.html', context)
+
+
+@login_required
+def pk_game(request):
+    """Parallel Kingdom style game interface with tabbed navigation"""
+    try:
+        character = Character.objects.get(user=request.user)
+    except Character.DoesNotExist:
+        messages.error(request, 'Character not found. Please create a character first.')
+        return redirect('character_creation')
+    
+    # Update character's online status
+    character.is_online = True
+    character.save(update_fields=['is_online', 'last_activity'])
+    
+    # Get game settings safely
+    try:
+        game_settings = settings.GAME_SETTINGS
+    except AttributeError:
+        # Fallback game settings
+        game_settings = {
+            'MAPBOX_ACCESS_TOKEN': 'pk.eyJ1IjoiamFsbGk5NiIsImEiOiJjbWU3eW9tZnUwOWJuMnJvcmJrN242OGloIn0.0OSOw3J1cDB45AIRS_mEbA',
+            'MAPBOX_STYLE': 'mapbox://styles/mapbox/dark-v11',
+            'ZOOM_LEVEL': 15
+        }
+    
+    context = {
+        'character': character,
+        'MAPBOX_ACCESS_TOKEN': game_settings.get('MAPBOX_ACCESS_TOKEN'),
+        'MAPBOX_STYLE': game_settings.get('MAPBOX_STYLE', 'mapbox://styles/mapbox/dark-v11'),
+        'ZOOM_LEVEL': game_settings.get('ZOOM_LEVEL', 15),
+    }
+    
+    return render(request, 'main/pk_game.html', context)
+
+
+@login_required
+def building_game(request):
+    """Building-focused game view with right-click placement"""
+    try:
+        character = Character.objects.get(user=request.user)
+    except Character.DoesNotExist:
+        return redirect('character_creation')
+    
+    # Update character's online status
+    character.is_online = True
+    character.save(update_fields=['is_online', 'last_activity'])
+    
+    context = {
+        'character': character,
+    }
+    
+    return render(request, 'pk/game_with_buildings.html', context)
+
+
+def building_test(request):
+    """Simple building test page that works without login"""
+    return render(request, 'pk/building_test.html')
+
+
 # ===============================
 # CHARACTER API ENDPOINTS
 # ===============================
+
+@login_required
+@require_http_methods(["POST"])
+def api_character_relocate(request):
+    """Relocate character to GPS coordinates"""
+    try:
+        character = Character.objects.get(user=request.user)
+        
+        # Parse request data
+        data = json.loads(request.body)
+        new_lat = float(data.get('lat', 0))
+        new_lon = float(data.get('lon', 0))
+        
+        # Validate coordinates
+        if not (-90 <= new_lat <= 90):
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid latitude. Must be between -90 and 90.'
+            }, status=400)
+        
+        if not (-180 <= new_lon <= 180):
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid longitude. Must be between -180 and 180.'
+            }, status=400)
+        
+        # Update character location
+        old_lat, old_lon = character.lat, character.lon
+        character.lat = new_lat
+        character.lon = new_lon
+        character.save()
+        
+        # Log the relocation event
+        GameEvent.objects.create(
+            character=character,
+            event_type='player_teleport',
+            title='GPS Relocation',
+            message=f'Teleported from ({old_lat:.4f}, {old_lon:.4f}) to ({new_lat:.4f}, {new_lon:.4f})',
+            data={'old_location': {'lat': old_lat, 'lon': old_lon}, 'new_location': {'lat': new_lat, 'lon': new_lon}}
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Character relocated successfully',
+            'location': {
+                'lat': character.lat,
+                'lon': character.lon
+            },
+            'distance_moved': character.distance_between(old_lat, old_lon, new_lat, new_lon)
+        })
+        
+    except Character.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Character not found'
+        }, status=404)
+    except (ValueError, KeyError, json.JSONDecodeError) as e:
+        return JsonResponse({
+            'success': False,
+            'error': f'Invalid request data: {str(e)}'
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': f'Server error: {str(e)}'
+        }, status=500)
+
 
 @login_required
 @require_http_methods(["GET"])

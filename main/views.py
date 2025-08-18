@@ -5,7 +5,7 @@ The main RPG system views are in views_rpg.py
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login
-from django.contrib.auth.forms import UserCreationForm
+from .forms import CustomUserCreationForm
 from django.contrib import messages
 from django.http import JsonResponse
 from django.utils import timezone
@@ -23,17 +23,22 @@ def index(request):
 def register(request):
     """User registration"""
     if request.method == 'POST':
-        form = UserCreationForm(request.POST)
+        form = CustomUserCreationForm(request.POST)
         if form.is_valid():
             user = form.save()
+            flag_color = form.cleaned_data.get('flag_color')
             username = form.cleaned_data.get('username')
+            
+            # Store the flag color choice for character creation
+            request.session['chosen_flag_color_id'] = flag_color.id
+            
             messages.success(request, f'Account created for {username}!')
             
             # Log in the user
             login(request, user)
             return redirect('index')  # Will redirect to RPG character creation
     else:
-        form = UserCreationForm()
+        form = CustomUserCreationForm()
     
     return render(request, 'registration/register.html', {'form': form})
 
