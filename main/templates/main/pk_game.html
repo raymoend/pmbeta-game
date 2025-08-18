@@ -668,9 +668,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize PK movement system
     let pkMovementSystem;
     if (typeof PKMovementSystem !== 'undefined') {
+        console.log('🎮 PKMovementSystem class found, initializing...');
+        
         // Wait for maps to be ready before initializing movement system
         const initMovementSystem = () => {
+            console.log('🎮 Checking if worldMap is ready...', worldMap ? 'exists' : 'missing', worldMap && worldMap.loaded() ? 'loaded' : 'not loaded');
+            
             if (worldMap && worldMap.loaded()) {
+                console.log('🎮 Initializing PKMovementSystem with character:', character);
+                
                 pkMovementSystem = new PKMovementSystem({
                     worldMap: worldMap,
                     territoryMap: territoryMap,
@@ -683,8 +689,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                     }
                 });
-                console.log('🎮 PK Movement System initialized');
+                console.log('🎮 PK Movement System initialized successfully!');
             } else {
+                console.log('🎮 Map not ready, retrying in 100ms...');
                 setTimeout(initMovementSystem, 100);
             }
         };

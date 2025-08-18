@@ -34,15 +34,27 @@ class PKMovementSystem {
     setupMapClickHandlers() {
         // Setup click handlers for both maps
         if (this.worldMap) {
-            this.worldMap.on('load', () => {
+            if (this.worldMap.loaded()) {
+                // Map is already loaded, setup immediately
                 this.setupMovementForMap(this.worldMap);
-            });
+            } else {
+                // Wait for map to load
+                this.worldMap.on('load', () => {
+                    this.setupMovementForMap(this.worldMap);
+                });
+            }
         }
         
         if (this.territoryMap) {
-            this.territoryMap.on('load', () => {
+            if (this.territoryMap.loaded()) {
+                // Map is already loaded, setup immediately
                 this.setupMovementForMap(this.territoryMap);
-            });
+            } else {
+                // Wait for map to load
+                this.territoryMap.on('load', () => {
+                    this.setupMovementForMap(this.territoryMap);
+                });
+            }
         }
     }
 
@@ -50,10 +62,15 @@ class PKMovementSystem {
         // Add player marker
         this.createPlayerMarkerOnMap(map);
 
+        console.log('⚡ Setting up click handler for map');
+        
         // Handle tap-to-move (left click only, right click is for flags)
         map.on('click', (e) => {
-            // Only move on left click, avoid flag right-click areas
-            if (e.originalEvent.button === 0) { // Left click
+            console.log('⚡ Map clicked:', e.originalEvent.button, e.lngLat);
+            
+            // Only move on left click, ignore right clicks (flags)
+            if (!e.originalEvent.button || e.originalEvent.button === 0) {
+                e.preventDefault();
                 this.handleMapClick(e, map);
             }
         });
@@ -92,9 +109,10 @@ class PKMovementSystem {
             this.playerMarker.addTo(map);
             
             // Add popup
+            const playerName = this.character.name || this.character.username || 'Player';
             this.playerMarker.setPopup(new mapboxgl.Popup({ offset: 25 })
                 .setHTML(`<div style="text-align: center;">
-                    <h4>${this.character.name}</h4>
+                    <h4>${playerName}</h4>
                     <p>Level ${this.character.level}</p>
                     <p>You are here</p>
                 </div>`));
