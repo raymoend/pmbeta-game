@@ -1,4 +1,5 @@
 {% extends 'pk/base.html' %}
+{% load static %}
 
 {% block title %}Parallel Kingdom - Game{% endblock %}
 
@@ -155,7 +156,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function setupEventHandlers() {
     // Quick action buttons
     document.getElementById('refresh-map').addEventListener('click', loadMapData);
-    document.getElementById('place-flag').addEventListener('click', showPlaceTerritoryModal);
+    // Place flag button removed - right-click now handles flag placement
     document.getElementById('center-on-player').addEventListener('click', centerOnPlayer);
     
     // Action buttons
@@ -480,4 +481,45 @@ function getCookie(name) {
 window.harvestResource = harvestResource;
 window.attackPlayer = attackPlayer;
 </script>
+
+<!-- Flag System Test - Debug Version -->
+<script>
+// Simple test to see if JavaScript works at all
+alert('JavaScript is working! Check console for more messages.');
+console.log('🚩 Inline flag test script starting...');
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🚩 DOM ready, setting up inline right-click test');
+    
+    // Test if we can find game elements
+    const gameView = document.getElementById('game-view');
+    const gameContainer = document.querySelector('.game-view-container');
+    
+    console.log('🚩 Found elements:', {
+        gameView: gameView,
+        gameContainer: gameContainer
+    });
+    
+    // Add a simple right-click detector to the entire document first
+    document.addEventListener('contextmenu', function(e) {
+        console.log('🚩 Right-click detected on:', e.target.tagName, e.target.className, e.target.id);
+        
+        // Check if we're on game elements
+        const isOnGameArea = e.target.closest('#game-view, .game-view-container, .game-grid');
+        if (isOnGameArea) {
+            console.log('🚩 RIGHT-CLICK ON GAME AREA!');
+            e.preventDefault();
+            e.stopPropagation();
+            
+            alert('Flag system working! Right-click detected on game area.');
+            return false;
+        }
+    });
+    
+    console.log('🚩 Right-click listeners set up');
+});
+
+console.log('🚩 Inline script loaded');
+</script>
+<script src="{% static 'js/simple_flag_test.js' %}"></script>
 {% endblock %}
