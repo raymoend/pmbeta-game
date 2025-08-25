@@ -21,4 +21,7 @@ RUN python manage.py collectstatic --noinput || true
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 pmbeta.asgi:application"]
+# Ensure production behavior on Railway and bind to provided $PORT
+ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production
+
+CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
