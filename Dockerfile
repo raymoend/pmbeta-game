@@ -24,6 +24,11 @@ EXPOSE 8000
 # Ensure production behavior on Railway and bind to provided $PORT
 ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production
 
+# Provide an `export` wrapper so Railway Start Command overrides like
+# `export FOO=bar && python ...` work even without a shell.
+RUN printf '%s\n' '#!/bin/sh' 'cmd="$*"' 'exec sh -lc "export $cmd"' > /usr/local/bin/export \
+    && chmod +x /usr/local/bin/export
+
 # Use a shell entrypoint so platform Start Command overrides that use shell builtins (e.g., `export`) work.
 ENTRYPOINT ["sh", "-lc"]
 
