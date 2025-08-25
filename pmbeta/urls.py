@@ -2,8 +2,9 @@
 PMBeta URL Configuration
 Location-based web game URLs
 """
+import os
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.http import JsonResponse
 from django.contrib.auth import views as auth_views
 from main import views  # Import for PK API endpoints
@@ -30,7 +31,7 @@ def runtime_debug(request):
     }
     # Check resolving of common health routes
     checks = {}
-    for p in ["/health/", "/healthz/", "/readyz/", "/livez/"]:
+    for p in ["/health/", "/health", "/healthz/", "/healthz", "/readyz/", "/readyz", "/livez/", "/livez"]:
         try:
             r = resolve(p)
             checks[p] = str(r)
@@ -43,15 +44,17 @@ def runtime_debug(request):
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # Healthcheck
+
+    # Healthchecks (robust: accept with and without trailing slash)
     path('health/', health, name='health'),
     path('healthz/', health, name='healthz_root'),
     path('livez/', health, name='livez'),
     path('readyz/', health, name='readyz'),
+    re_path(r'^(health|healthz|livez|readyz)$', health),
     path('debug/runtime/', runtime_debug, name='runtime_debug'),
 
-# Auth (logout via simple view allowing GET/POST for dev convenience)
-path('logout/', views_rpg.logout_view, name='logout'),
+    # Auth (logout via simple view allowing GET/POST for dev convenience)
+    path('logout/', views_rpg.logout_view, name='logout'),
 
     # Game routes
     path('', include('main.urls_rpg')),  # Use new RPG system as default
