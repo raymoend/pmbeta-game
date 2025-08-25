@@ -22,7 +22,7 @@ RUN python manage.py collectstatic --noinput || true
 EXPOSE 8000
 
 # Ensure production behavior on Railway and bind to provided $PORT
-ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production
+ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production RAILWAY_QUICK_START=1
 
 # Provide an `export` wrapper so Railway Start Command overrides like
 # `export FOO=bar && python ...` work even without a shell.

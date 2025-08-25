@@ -1,6 +1,7 @@
 """
 Management command to setup Railway deployment
 """
+import os
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from main.views_rpg import create_starter_items, create_monster_templates, create_basic_regions
@@ -31,7 +32,14 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.WARNING('→ Admin user already exists'))
 
-        # Initialize game data
+        # Quick start mode: skip heavy initializers to avoid healthcheck timeouts
+        quick = os.environ.get('RAILWAY_QUICK_START', '').lower() in ('1', 'true', 'yes')
+        if quick:
+            self.stdout.write(self.style.WARNING('RAILWAY_QUICK_START enabled: skipping heavy data initialization'))
+            self.stdout.write(self.style.SUCCESS('✅ Minimal setup complete'))
+            return
+
+        # Initialize game data (can take time)
         try:
             self.stdout.write('Initializing starter items...')
             create_starter_items()
