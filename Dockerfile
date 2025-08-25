@@ -33,4 +33,6 @@ RUN printf '%s\n' '#!/bin/sh' 'cmd="$*"' 'exec sh -lc "export $cmd"' > /usr/loca
 ENTRYPOINT ["sh", "-lc"]
 
 # Default start command (used when no Start Command override is set)
-CMD ["python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
+# Do not run migrations here to avoid startup healthcheck timeouts.
+# Run migrations as a one-off job in Railway after deploy instead.
+CMD ["daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
