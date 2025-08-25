@@ -24,4 +24,8 @@ EXPOSE 8000
 # Ensure production behavior on Railway and bind to provided $PORT
 ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production
 
-CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
+# Use a shell entrypoint so platform Start Command overrides that use shell builtins (e.g., `export`) work.
+ENTRYPOINT ["sh", "-lc"]
+
+# Default start command (used when no Start Command override is set)
+CMD ["python manage.py migrate --noinput && daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
