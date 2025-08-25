@@ -4,15 +4,62 @@ Location-based web game URLs
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
+from django.contrib.auth import views as auth_views
 from main import views  # Import for PK API endpoints
 from main import views_resources  # Import for resource endpoints
+from main import views_rpg
+
+# Simple healthcheck for Railway and production load balancers
+def health(request):
+    return JsonResponse({"status": "ok"}, status=200)
+
+# Runtime debug endpoint: shows active settings and URL resolving state
+# NOTE: Keep minimal and non-sensitive
+from django.conf import settings
+from django.urls import resolve, Resolver404
+
+def runtime_debug(request):
+    info = {
+        "DJANGO_SETTINGS_MODULE": os.environ.get("DJANGO_SETTINGS_MODULE"),
+        "ROOT_URLCONF": getattr(settings, "ROOT_URLCONF", None),
+        "DEBUG": getattr(settings, "DEBUG", None),
+        "ALLOWED_HOSTS": getattr(settings, "ALLOWED_HOSTS", []),
+        "ASGI_APPLICATION": getattr(settings, "ASGI_APPLICATION", None),
+        "WSGI_APPLICATION": getattr(settings, "WSGI_APPLICATION", None),
+    }
+    # Check resolving of common health routes
+    checks = {}
+    for p in ["/health/", "/healthz/", "/readyz/", "/livez/"]:
+        try:
+            r = resolve(p)
+            checks[p] = str(r)
+        except Resolver404:
+            checks[p] = "Resolver404"
+        except Exception as e:
+            checks[p] = f"error: {type(e).__name__}: {e}"
+    info["resolve_checks"] = checks
+    return JsonResponse(info, status=200)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Healthcheck
+    path('health/', health, name='health'),
+    path('healthz/', health, name='healthz_root'),
+    path('livez/', health, name='livez'),
+    path('readyz/', health, name='readyz'),
+    path('debug/runtime/', runtime_debug, name='runtime_debug'),
+
+# Auth (logout via simple view allowing GET/POST for dev convenience)
+path('logout/', views_rpg.logout_view, name='logout'),
+
+    # Game routes
     path('', include('main.urls_rpg')),  # Use new RPG system as default
     path('legacy/', include('main.urls')),  # Keep old system for reference
     path('', include('main.urls_crafting')),  # Crafting system endpoints
-    path('', include('main.flag_urls')),  # PK-style territory flag system
+
+    # Flag API
+    path('api/', include('main.flag_urls')),
     
     # PK Movement and Resource API (temporary - until PK models are fixed)
     path('api/player/move/', views.api_player_move, name='api_player_move_root'),

@@ -1,26 +1,24 @@
-"""
-URL patterns for Parallel Kingdom style territory flag system
-"""
-from django.urls import path
-from . import flag_views
+from django.urls import path, re_path
+from .flag_views import flags_near, flags_list, place_flag, flag_detail, attack_flag, capture_flag, collect_revenue, update_flag, delete_flag
 
 urlpatterns = [
-    # Flag placement and management
-    path('api/flags/colors/', flag_views.api_flag_colors, name='api_flag_colors'),
-    path('api/flags/can-place/', flag_views.api_can_place_flag, name='api_can_place_flag'),
-    path('api/flags/place/', flag_views.api_place_flag, name='api_place_flag'),
-    path('api/flags/nearby/', flag_views.api_nearby_flags, name='api_nearby_flags'),
+    # New canonical list endpoint expected by frontend
+    path("flags/", flags_list, name="flags_list"),
     
-    # Flag operations
-    path('api/flags/<uuid:flag_id>/collect-revenue/', flag_views.api_collect_flag_revenue, name='api_collect_flag_revenue'),
-    path('api/flags/<uuid:flag_id>/pay-upkeep/', flag_views.api_pay_flag_upkeep, name='api_pay_flag_upkeep'),
-    path('api/flags/<uuid:flag_id>/upgrade/', flag_views.api_upgrade_flag, name='api_upgrade_flag'),
-    path('api/flags/<uuid:flag_id>/repair/', flag_views.api_repair_flag, name='api_repair_flag'),
+    # Nearby alias (accepts optional lat/lon)
+    path("flags/near/", flags_near, name="flags_near"),
     
-    # PvP flag combat
-    path('api/flags/<uuid:flag_id>/attack/', flag_views.api_attack_flag, name='api_attack_flag'),
-    path('api/flags/<uuid:flag_id>/capture/', flag_views.api_capture_flag, name='api_capture_flag'),
+    # Place
+    path("flags/place/", place_flag, name="place_flag"),
     
-    # Map data
-    path('api/flags/territories/geojson/', flag_views.api_flag_territories_geojson, name='api_flag_territories_geojson'),
+    # Detail and actions
+    re_path(r"^flags/(?P<flag_id>[^/]+)/$", flag_detail, name="flag_detail"),
+    re_path(r"^flags/(?P<flag_id>[^/]+)/attack/$", attack_flag, name="attack_flag"),
+    re_path(r"^flags/(?P<flag_id>[^/]+)/capture/$", capture_flag, name="capture_flag"),
+    re_path(r"^flags/(?P<flag_id>[^/]+)/collect/$", collect_revenue, name="collect_flag_revenue"),
+    re_path(r"^flags/(?P<flag_id>[^/]+)/update/$", update_flag, name="update_flag"),
+    re_path(r"^flags/(?P<flag_id>[^/]+)/delete/$", delete_flag, name="delete_flag"),
+
+    # PK-style run endpoints removed (FlagRun deprecated)
 ]
+

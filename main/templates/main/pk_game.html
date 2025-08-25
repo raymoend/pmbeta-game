@@ -3,250 +3,6 @@
 
 {% block title %}PMBeta - Parallel Kingdom Style{% endblock %}
 
-{% block extra_css %}
-    <link rel="stylesheet" href="{% static 'css/territory-manager.css' %}">
-    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
-    <style>
-        /* Parallel Kingdom Style Interface */
-        .pk-game-container {
-            height: 100vh;
-            background: #1a1a1a;
-            color: #fff;
-            font-family: 'Trebuchet MS', sans-serif;
-        }
-        
-        .pk-top-bar {
-            background: linear-gradient(to bottom, #3a3a3a, #2a2a2a);
-            border-bottom: 2px solid #555;
-            padding: 10px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
-        }
-        
-        .pk-logo {
-            font-size: 24px;
-            font-weight: bold;
-            color: #ffd700;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-        }
-        
-        .pk-character-info {
-            display: flex;
-            gap: 20px;
-            align-items: center;
-        }
-        
-        .pk-stat {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background: rgba(0,0,0,0.3);
-            padding: 8px 12px;
-            border-radius: 5px;
-            border: 1px solid #555;
-        }
-        
-        .pk-stat-label {
-            font-size: 10px;
-            color: #ccc;
-            text-transform: uppercase;
-        }
-        
-        .pk-stat-value {
-            font-size: 14px;
-            font-weight: bold;
-            color: #fff;
-        }
-        
-        .pk-main-content {
-            display: flex;
-            height: calc(100vh - 70px);
-        }
-        
-        .pk-sidebar {
-            width: 250px;
-            background: linear-gradient(to bottom, #2a2a2a, #1a1a1a);
-            border-right: 2px solid #555;
-            overflow-y: auto;
-        }
-        
-        .pk-nav-tabs {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-        
-        .pk-nav-tab {
-            background: linear-gradient(to bottom, #4a4a4a, #3a3a3a);
-            border-bottom: 1px solid #555;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .pk-nav-tab:hover {
-            background: linear-gradient(to bottom, #5a5a5a, #4a4a4a);
-        }
-        
-        .pk-nav-tab.active {
-            background: linear-gradient(to bottom, #ffd700, #ffb300);
-            color: #000;
-        }
-        
-        .pk-nav-tab a {
-            display: flex;
-            align-items: center;
-            padding: 15px 20px;
-            text-decoration: none;
-            color: inherit;
-            gap: 10px;
-        }
-        
-        .pk-nav-tab.active a {
-            color: #000;
-            font-weight: bold;
-        }
-        
-        .pk-content-area {
-            flex: 1;
-            background: #1a1a1a;
-            position: relative;
-        }
-        
-        .pk-content-panel {
-            display: none;
-            height: 100%;
-            padding: 0;
-        }
-        
-        .pk-content-panel.active {
-            display: block;
-        }
-        
-        /* Map specific styles */
-        #pk-map {
-            width: 100%;
-            height: 100%;
-        }
-        
-        /* Territory panel styles */
-        .pk-territory-panel {
-            display: flex;
-            height: 100%;
-        }
-        
-        .pk-territory-map {
-            flex: 1;
-            position: relative;
-        }
-        
-        .pk-territory-controls {
-            width: 300px;
-            background: linear-gradient(to bottom, #2a2a2a, #1a1a1a);
-            border-left: 2px solid #555;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        
-        .pk-button {
-            background: linear-gradient(to bottom, #ffd700, #ffb300);
-            color: #000;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            width: 100%;
-            margin-bottom: 10px;
-        }
-        
-        .pk-button:hover {
-            background: linear-gradient(to bottom, #fff200, #ffd700);
-            transform: translateY(-1px);
-        }
-        
-        .pk-button-danger {
-            background: linear-gradient(to bottom, #ff4444, #cc0000);
-            color: #fff;
-        }
-        
-        .pk-button-danger:hover {
-            background: linear-gradient(to bottom, #ff6666, #ff4444);
-        }
-        
-        .pk-card {
-            background: linear-gradient(to bottom, #3a3a3a, #2a2a2a);
-            border: 1px solid #555;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-        }
-        
-        .pk-card-header {
-            font-size: 14px;
-            font-weight: bold;
-            color: #ffd700;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            border-bottom: 1px solid #555;
-            padding-bottom: 5px;
-        }
-        
-        /* Loading overlay */
-        .pk-loading {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        
-        .pk-spinner {
-            border: 4px solid #333;
-            border-top: 4px solid #ffd700;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .pk-main-content {
-                flex-direction: column;
-            }
-            
-            .pk-sidebar {
-                width: 100%;
-                height: auto;
-            }
-            
-            .pk-nav-tabs {
-                display: flex;
-                overflow-x: auto;
-            }
-            
-            .pk-nav-tab {
-                flex: 1;
-                min-width: 120px;
-            }
-        }
-    </style>
-{% endblock %}
-
 {% block content %}
 <div class="pk-game-container">
     {% csrf_token %}
@@ -296,30 +52,6 @@
                         <span>Territories</span>
                     </a>
                 </li>
-                <li class="pk-nav-tab" data-panel="buildings">
-                    <a href="#buildings">
-                        <i class="fas fa-building"></i>
-                        <span>Buildings</span>
-                    </a>
-                </li>
-                <li class="pk-nav-tab" data-panel="inventory">
-                    <a href="#inventory">
-                        <i class="fas fa-backpack"></i>
-                        <span>Inventory</span>
-                    </a>
-                </li>
-                <li class="pk-nav-tab" data-panel="combat">
-                    <a href="#combat">
-                        <i class="fas fa-sword"></i>
-                        <span>Combat</span>
-                    </a>
-                </li>
-                <li class="pk-nav-tab" data-panel="social">
-                    <a href="#social">
-                        <i class="fas fa-users"></i>
-                        <span>Players</span>
-                    </a>
-                </li>
             </ul>
         </div>
         
@@ -339,122 +71,10 @@
             
             <!-- Territories Panel -->
             <div class="pk-content-panel" id="panel-territories">
-                <div class="pk-territory-panel">
-                    <div class="pk-territory-map">
-                        <div id="territory-map" style="width: 100%; height: 100%;">
-                            <div class="pk-loading" id="territory-loading">
-                                <div>
-                                    <div class="pk-spinner"></div>
-                                    <p style="margin-top: 20px;">Loading territories...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="pk-territory-controls">
-                        <div class="pk-card">
-                            <div class="pk-card-header">
-                                <i class="fas fa-broom"></i> Emergency Controls
-                            </div>
-                            <button id="cleanup-phantom-flags" class="pk-button pk-button-danger">
-                                <i class="fas fa-broom"></i> Clean Phantom Flags
-                            </button>
-                        </div>
-                        
-                        <div class="pk-card">
-                            <div class="pk-card-header">
-                                <i class="fas fa-flag"></i> Territory Actions
-                            </div>
-                            <button id="place-territory-btn" class="pk-button">
-                                <i class="fas fa-plus"></i> Place Territory
-                            </button>
-                            <button id="refresh-territories" class="pk-button">
-                                <i class="fas fa-sync-alt"></i> Refresh
-                            </button>
-                        </div>
-                        
-                        <div class="pk-card">
-                            <div class="pk-card-header">
-                                <i class="fas fa-coins"></i> Economy
-                            </div>
-                            <div id="economy-stats">
-                                <div class="pk-stat-row">
-                                    <span>Territories:</span>
-                                    <span>0</span>
-                                </div>
-                            </div>
-                            <button id="collect-all-revenue" class="pk-button">
-                                <i class="fas fa-coins"></i> Collect All
-                            </button>
-                        </div>
-                        
-                        <div class="pk-card">
-                            <div class="pk-card-header">
-                                <i class="fas fa-list"></i> My Territories
-                            </div>
-                            <div id="territory-list">
-                                <p style="color: #ccc; font-style: italic;">Loading territories...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Buildings Panel -->
-            <div class="pk-content-panel" id="panel-buildings">
                 <div style="padding: 20px; text-align: center;">
-                    <h3><i class="fas fa-building"></i> Buildings</h3>
-                    <p style="color: #ccc;">Building system coming soon!</p>
+                    <h3><i class="fas fa-flag"></i> Territories</h3>
+                    <p style="color: #ccc;">Territory system temporarily disabled to fix phantom markers bug.</p>
                 </div>
-            </div>
-            
-            <!-- Inventory Panel -->
-            <div class="pk-content-panel" id="panel-inventory">
-                <div style="padding: 20px; text-align: center;">
-                    <h3><i class="fas fa-backpack"></i> Inventory</h3>
-                    <p style="color: #ccc;">Inventory system coming soon!</p>
-                </div>
-            </div>
-            
-            <!-- Combat Panel -->
-            <div class="pk-content-panel" id="panel-combat">
-                <div style="padding: 20px; text-align: center;">
-                    <h3><i class="fas fa-sword"></i> Combat</h3>
-                    <p style="color: #ccc;">Combat system coming soon!</p>
-                </div>
-            </div>
-            
-            <!-- Social Panel -->
-            <div class="pk-content-panel" id="panel-social">
-                <div style="padding: 20px; text-align: center;">
-                    <h3><i class="fas fa-users"></i> Players</h3>
-                    <p style="color: #ccc;">Social features coming soon!</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Territory Modals (same as before) -->
-<div class="modal fade" id="territoryDetailsModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content bg-dark text-white">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="fas fa-flag"></i> <span id="modal-territory-name">Territory Details</span>
-                </h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div id="territory-detail-content">
-                    <!-- Territory details content -->
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary" id="center-on-territory">
-                    <i class="fas fa-crosshairs"></i> Center on Map
-                </button>
             </div>
         </div>
     </div>
@@ -462,17 +82,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<!-- MapBox GL JS -->
 <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
-
-<!-- Territory Manager -->
-<script src="{% static 'js/territory-manager.js' %}"></script>
-
-<!-- Flag System -->
-<script src="{% static 'js/flag_system.js' %}"></script>
-
-<!-- PK Movement System -->
-<script src="{% static 'js/pk_movement.js' %}"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -489,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize MapBox
     mapboxgl.accessToken = '{{ MAPBOX_ACCESS_TOKEN }}';
     
-    let worldMap, territoryMap, territoryManager;
+    let worldMap;
     
     // Navigation system
     const navTabs = document.querySelectorAll('.pk-nav-tab');
@@ -506,20 +116,15 @@ document.addEventListener('DOMContentLoaded', function() {
     function switchPanel(panelId) {
         // Update active tab
         navTabs.forEach(tab => tab.classList.remove('active'));
-        document.querySelector(`[data-panel="${panelId}"]`).classList.add('active');
+        document.querySelector([data-panel=""]).classList.add('active');
         
         // Update active panel
         contentPanels.forEach(panel => panel.classList.remove('active'));
-        document.getElementById(`panel-${panelId}`).classList.add('active');
+        document.getElementById(panel-).classList.add('active');
         
         // Initialize panel content if needed
-        switch(panelId) {
-            case 'world':
-                initWorldMap();
-                break;
-            case 'territories':
-                initTerritoryManager();
-                break;
+        if (panelId === 'world') {
+            initWorldMap();
         }
     }
     
@@ -547,167 +152,17 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .setLngLat([character.lon, character.lat])
             .setPopup(new mapboxgl.Popup({ offset: 25 })
-                .setHTML(`<div style="text-align: center;">
-                    <h4>${character.name}</h4>
-                    <p>Level ${character.level}</p>
+                .setHTML(<div style="text-align: center;">
+                    <h4></h4>
+                    <p>Level </p>
                     <p>You are here</p>
-                </div>`))
+                </div>))
             .addTo(worldMap);
-            
-            // Load territory circles once map is ready
-            if (window.flagSystem) {
-                setTimeout(() => {
-                    window.flagSystem.loadTerritoryCircles();
-                }, 1000);
-            }
         });
     }
     
-    function initTerritoryManager() {
-        if (territoryManager) {
-            // Already initialized, just refresh
-            territoryManager.forceCleanPhantomFlags();
-            return;
-        }
-        
-        territoryMap = new mapboxgl.Map({
-            container: 'territory-map',
-            style: 'mapbox://styles/mapbox/dark-v11',
-            center: [character.lon, character.lat],
-            zoom: 15,
-            minZoom: 15,
-            maxZoom: 18,
-            pitch: 0,
-            bearing: 0
-        });
-        
-        territoryMap.on('load', function() {
-            document.getElementById('territory-loading').style.display = 'none';
-            
-            // Initialize territory manager
-            territoryManager = new TerritoryManager({
-                mapInstance: territoryMap,
-                character: character
-            });
-            
-            // Add player marker
-            new mapboxgl.Marker({
-                color: '#3498db',
-                scale: 1.2
-            })
-            .setLngLat([character.lon, character.lat])
-            .setPopup(new mapboxgl.Popup({ offset: 25 })
-                .setHTML(`<div style="text-align: center;">
-                    <h4>${character.name}</h4>
-                    <p>Level ${character.level}</p>
-                    <p>You are here</p>
-                </div>`))
-            .addTo(territoryMap);
-            
-            // Load territory circles once map is ready
-            if (window.flagSystem) {
-                setTimeout(() => {
-                    window.flagSystem.loadTerritoryCircles();
-                }, 1000);
-            }
-            
-            // Setup UI handlers
-            setupTerritoryUI();
-        });
-    }
-    
-    function setupTerritoryUI() {
-        // Emergency cleanup button
-        document.getElementById('cleanup-phantom-flags').addEventListener('click', function() {
-            if (territoryManager) {
-                console.log('🚑 User requested phantom flag cleanup');
-                territoryManager.forceCleanPhantomFlags();
-            }
-        });
-        
-        // Territory placement button
-        document.getElementById('place-territory-btn').addEventListener('click', function() {
-            if (territoryManager) {
-                if (territoryManager.placementMode) {
-                    territoryManager.exitPlacementMode();
-                    this.innerHTML = '<i class="fas fa-plus"></i> Place Territory';
-                } else {
-                    territoryManager.enterPlacementMode();
-                    this.innerHTML = '<i class="fas fa-times"></i> Cancel Placement';
-                }
-            }
-        });
-        
-        // Refresh territories
-        document.getElementById('refresh-territories').addEventListener('click', function() {
-            if (territoryManager) {
-                territoryManager.loadTerritories();
-            }
-        });
-        
-        // Collect all revenue
-        document.getElementById('collect-all-revenue').addEventListener('click', function() {
-            if (territoryManager) {
-                territoryManager.autoCollectAllRevenue();
-            }
-        });
-    }
-    
-    // Initialize world map by default
-    initWorldMap();
-    
-    // Initialize flag system
-    let flagSystem;
-    if (typeof SimpleFlagSystem !== 'undefined') {
-        flagSystem = new SimpleFlagSystem();
-        console.log('🚩 Flag system initialized');
-    } else {
-        console.warn('🚩 SimpleFlagSystem not found - flag placement may not work');
-    }
-    
-    // Initialize PK movement system
-    let pkMovementSystem;
-    if (typeof PKMovementSystem !== 'undefined') {
-        console.log('🎮 PKMovementSystem class found, initializing...');
-        
-        // Wait for maps to be ready before initializing movement system
-        const initMovementSystem = () => {
-            console.log('🎮 Checking if worldMap is ready...', worldMap ? 'exists' : 'missing', worldMap && worldMap.loaded() ? 'loaded' : 'not loaded');
-            
-            if (worldMap && worldMap.loaded()) {
-                console.log('🎮 Initializing PKMovementSystem with character:', character);
-                
-                pkMovementSystem = new PKMovementSystem({
-                    worldMap: worldMap,
-                    territoryMap: territoryMap,
-                    character: character,
-                    onLocationUpdate: (newLat, newLon) => {
-                        // Update UI with new location - find the location stat more reliably
-                        const locationStat = document.querySelector('.pk-character-info .pk-stat:last-child .pk-stat-value');
-                        if (locationStat) {
-                            locationStat.textContent = `${newLat.toFixed(3)},${newLon.toFixed(3)}`;
-                        }
-                    }
-                });
-                console.log('🎮 PK Movement System initialized successfully!');
-            } else {
-                console.log('🎮 Map not ready, retrying in 100ms...');
-                setTimeout(initMovementSystem, 100);
-            }
-        };
-        setTimeout(initMovementSystem, 1000);
-    } else {
-        console.warn('🎮 PKMovementSystem not found - tap-to-move may not work');
-    }
-    
-    // Global references for flag system
-    window.territoryManager = territoryManager;
-    window.switchPanel = switchPanel;
-    window.flagSystem = flagSystem;
-    window.pkMovementSystem = pkMovementSystem;
-    window.worldMap = worldMap;
-    window.territoryMap = territoryMap;
-    window.character = character;  // Make character data globally accessible
+    // Initialize with world map
+    switchPanel('world');
 });
 </script>
 {% endblock %}

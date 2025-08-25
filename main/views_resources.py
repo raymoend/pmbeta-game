@@ -11,6 +11,8 @@ from django.utils import timezone
 from django.db.models import Q
 import json
 import math
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
 from .models import (
     Character, ResourceNode, ResourceHarvest, 
@@ -153,6 +155,20 @@ def harvest_resource(request):
         }
     )
     
+    # Push live updates over WebSocket (inventory and character)
+    try:
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'inventory_update'}
+        )
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'character_update'}
+        )
+    except Exception:
+        pass
+
     return JsonResponse({
         'success': True,
         'message': f'Successfully harvested {resource.get_resource_type_display()}',
@@ -222,6 +238,20 @@ def use_item(request):
     
     # Get updated character stats
     character.refresh_from_db()
+
+    # Push updates: inventory may have changed and character stats changed
+    try:
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'inventory_update'}
+        )
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'character_update'}
+        )
+    except Exception:
+        pass
     
     return JsonResponse({
         'success': True,
@@ -241,7 +271,7 @@ def use_item(request):
 @require_http_methods(["POST"])
 @login_required
 def use_berries(request):
-    """Quick heal using berries"""
+    """Quick heal using Energy Berries (themed) with legacy fallback to 'berries'"""
     try:
         character = request.user.character
     except Character.DoesNotExist:
@@ -255,14 +285,30 @@ def use_berries(request):
     if not character.can_act():
         return JsonResponse({'error': 'Character cannot act (in combat or no stamina)'}, status=400)
     
-    # Try to use berries
-    success, message = character.use_item('berries', 1)
+    # Prefer Energy Berries; fallback to legacy 'berries'
+    success, message = character.use_item('Energy Berries', 1)
+    if not success:
+        success, message = character.use_item('berries', 1)
     
     if not success:
         return JsonResponse({'error': message}, status=400)
     
     # Get updated character stats
     character.refresh_from_db()
+
+    # Push updates after berries use
+    try:
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'inventory_update'}
+        )
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'character_update'}
+        )
+    except Exception:
+        pass
     
     return JsonResponse({
         'success': True,

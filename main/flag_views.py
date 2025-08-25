@@ -1,692 +1,346 @@
-"""
-Parallel Kingdom Style Flag System API Views
-Territory control flags with radius-based ownership, upkeep, and combat
-"""
-from django.shortcuts import get_object_or_404
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse, HttpResponseBadRequest
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
 from django.utils import timezone
-from datetime import timedelta
-import json
-import math
+from django.db import transaction
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
-from .models import Character
-from .flag_models import TerritoryFlag, TerritoryZone, FlagRevenueCollection, FlagCombatLog
-from .building_models import FlagColor
+from .services.flags import (
+    list_flags_near as svc_list_flags_near,
+    place_flag as svc_place_flag,
+    attack_flag as svc_attack_flag,
+    capture_flag as svc_capture_flag,
+    collect_revenue as svc_collect_revenue,
+    FlagError,
+)
+from .services.territory import spawn_monsters_in_flag, find_next_flag_to_run
 
 
-def can_place_flag_at_location(character, lat, lon, radius=200):
-    """
-    Check if a flag can be placed at the given location
-    Implements PK territory overlap rules - flags must be outside existing territory radius
-    """
-    from django.conf import settings
-    
-    # Check if location is within reasonable distance of player
-    distance_to_player = character.distance_to(lat, lon)
-    max_placement_distance = 1000  # 1km max like PK
-    
-    if distance_to_player > max_placement_distance:
-        return False, f"Cannot place flag more than {max_placement_distance}m from your location"
-    
-    # Get minimum distance between flags from settings
-    min_distance = settings.GAME_SETTINGS.get('FLAG_PLACEMENT_MIN_DISTANCE', 400)
-    
-    # Check all existing flags for distance conflicts (including own flags)
-    # In PK style, you cannot place overlapping flags even if they're your own
-    existing_flags = TerritoryFlag.objects.filter(
-        status__in=['active', 'constructing', 'upgrading', 'damaged']
-    )  # Check against ALL flags, including own
-    
-    for existing_flag in existing_flags:
-        distance_to_flag = existing_flag.distance_to(lat, lon)
-        required_distance = existing_flag.radius_meters + radius  # Sum of both radii
-        
-        if distance_to_flag < required_distance:
-            return False, f"Too close to {existing_flag.owner.name}'s {existing_flag.display_name}. Need {required_distance}m distance (currently {int(distance_to_flag)}m)"
-    
-    return True, "Location is available"
+def _parse_float(request, name, default=None):
+    # Support both JSON and form-encoded
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            import json
+            body = json.loads(request.body or b"{}")
+            if name in body:
+                return float(body.get(name))
+        except Exception:
+            pass
+    val = request.GET.get(name) if request.method == "GET" else request.POST.get(name)
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except Exception:
+        return None
+
+
+def _serialize_flag(flag):
+    # Resolve owner's chosen flag color if available
+    color_hex = None
+    try:
+        owner = getattr(flag, 'owner', None)
+        ch = getattr(owner, 'character', None) if owner else None
+        color = getattr(ch, 'flag_color', None)
+        color_hex = getattr(color, 'hex_color', None)
+    except Exception:
+        color_hex = None
+    return {
+        "id": str(getattr(flag, "id", "")),
+        "owner_id": getattr(flag, "owner_id", None),
+        "name": getattr(flag, "name", ""),
+        "lat": getattr(flag, "lat", None),
+        "lon": getattr(flag, "lon", None),
+        "level": getattr(flag, "level", 1),
+        "hp_current": getattr(flag, "hp_current", 0),
+        "hp_max": getattr(flag, "hp_max", 0),
+        "status": getattr(flag, "status", "active"),
+        "is_private": bool(getattr(flag, "is_private", False)),
+        "protection_ends_at": flag.protection_ends_at.isoformat() if getattr(flag, "protection_ends_at", None) else None,
+        "capture_window_ends_at": flag.capture_window_ends_at.isoformat() if getattr(flag, "capture_window_ends_at", None) else None,
+        "uncollected_balance": getattr(flag, "uncollected_balance", 0),
+        "color": color_hex,
+    }
+
+
+def _broadcast_flag_event(flag, event, extra=None, radius_m=800):
+    # Default: broadcast to a single group keyed by a coarse tile
+    try:
+        from .utils.geo import tiles_within_radius
+        layer = get_channel_layer()
+        tiles = tiles_within_radius(flag.lat, flag.lon, radius_m)
+        payload = {"type": "flag_event", "event": event, "flag": _serialize_flag(flag)}
+        if extra:
+            payload["extra"] = extra
+        for g in tiles:
+            async_to_sync(layer.group_send)(g, {"type": "flag.event", "payload": payload})
+    except Exception:
+        # Silent fallback if Channels layer not configured
+        pass
 
 
 @login_required
 @require_http_methods(["GET"])
-def api_flag_colors(request):
-    """Get available flag colors for player"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        flag_colors = []
-        for color in FlagColor.objects.filter(is_active=True):
-            can_use = True
-            if color.is_premium:
-                can_use = (
-                    character.level >= color.unlock_level and
-                    character.gold >= color.unlock_cost
-                )
-            
-            flag_colors.append({
-                'id': str(color.id),
-                'name': color.name,
-                'hex_color': color.hex_color,
-                'display_name': color.display_name,
-                'is_premium': color.is_premium,
-                'unlock_level': color.unlock_level,
-                'unlock_cost': color.unlock_cost,
-                'can_use': can_use
-            })
-        
-        return JsonResponse({
-            'success': True,
-            'flag_colors': flag_colors
-        })
-        
-    except Character.DoesNotExist:
-        return JsonResponse({
-            'success': False,
-            'error': 'Character not found'
-        }, status=404)
+def flags_near(request):
+    # Accept optional lat/lon; default to player's current position
+    lat = _parse_float(request, "lat")
+    lon = _parse_float(request, "lon")
+    radius_m = _parse_float(request, "radius_m", 750.0)
+    if lat is None or lon is None:
+        character = getattr(request.user, "character", None)
+        if character is None:
+            return JsonResponse({"success": False, "ok": False, "error": "No character found"}, status=400)
+        lat = character.lat
+        lon = character.lon
+    flags = svc_list_flags_near(lat, lon, radius_m)
+    return JsonResponse({"success": True, "ok": True, "data": {"flags": flags}})
 
 
 @login_required
 @require_http_methods(["POST"])
-def api_can_place_flag(request):
-    """Check if flag can be placed at location"""
+@transaction.atomic
+def place_flag(request):
     try:
-        character = Character.objects.get(user=request.user)
-        data = json.loads(request.body)
-        
-        lat = float(data.get('lat'))
-        lon = float(data.get('lon'))
-        
-        can_place, message = can_place_flag_at_location(character, lat, lon)
-        
-        return JsonResponse({
-            'success': True,
-            'can_place': can_place,
-            'message': message
-        })
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_place_flag(request):
-    """Place a new territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        data = json.loads(request.body)
-        lat = float(data.get('lat'))
-        lon = float(data.get('lon'))
-        custom_name = data.get('custom_name', '').strip()
-        
-        # Use character's chosen flag color
-        flag_color = character.flag_color
-        
-        # Validate inputs
-        if not lat or not lon:
-            return JsonResponse({
-                'success': False,
-                'error': 'Missing required coordinates'
-            }, status=400)
-        
-        # Check placement rules
-        can_place, message = can_place_flag_at_location(character, lat, lon)
-        if not can_place:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-        # Use default red color if character doesn't have a flag color set
-        if not flag_color:
+        lat = _parse_float(request, "lat")
+        lon = _parse_float(request, "lon")
+        name = None
+        if request.content_type and 'application/json' in request.content_type:
+            import json
             try:
-                flag_color = FlagColor.objects.filter(
-                    hex_color='#ff0000',  # Red color
-                    is_active=True
-                ).first()
-            except:
-                pass
-        
-        with transaction.atomic():
-            # Check resources (PK-style flag costs)
-            flag_cost_gold = 500  # Base cost for flag
-            flag_cost_wood = 20
-            flag_cost_stone = 10
-            
-            if character.gold < flag_cost_gold:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {flag_cost_gold} gold (have {character.gold})'
-                }, status=400)
-            
-            # Check wood
-            try:
-                wood_item = character.inventory.get(item_template__name='wood')
-                if wood_item.quantity < flag_cost_wood:
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Need {flag_cost_wood} wood (have {wood_item.quantity})'
-                    }, status=400)
-            except:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {flag_cost_wood} wood (have 0)'
-                }, status=400)
-            
-            # Check stone
-            try:
-                stone_item = character.inventory.get(item_template__name='stone')
-                if stone_item.quantity < flag_cost_stone:
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Need {flag_cost_stone} stone (have {stone_item.quantity})'
-                    }, status=400)
-            except:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {flag_cost_stone} stone (have 0)'
-                }, status=400)
-            
-            # Deduct resources
-            character.gold -= flag_cost_gold
-            character.save()
-            
-            wood_item.quantity -= flag_cost_wood
-            if wood_item.quantity <= 0:
-                wood_item.delete()
-            else:
-                wood_item.save()
-            
-            stone_item.quantity -= flag_cost_stone
-            if stone_item.quantity <= 0:
-                stone_item.delete()
-            else:
-                stone_item.save()
-            
-            # Create flag - instant placement
-            flag = TerritoryFlag.objects.create(
-                owner=character,
-                lat=lat,
-                lon=lon,
-                flag_color=flag_color,
-                custom_name=custom_name or "Territory Flag",
-                level=1,
-                radius_meters=200,  # Level 1 radius
-                current_hp=100,
-                max_hp=100,
-                daily_upkeep_cost=50,
-                status='active',  # Instant activation
-                construction_time_minutes=0  # No construction time
-            )
-            
-            # Create territory zone
-            flag.regenerate_territory_zone()
-            
-            return JsonResponse({
-                'success': True,
-                'message': 'Territory flag placed successfully! Your territory is now active.',
-                'flag': {
-                    'id': str(flag.id),
-                    'name': flag.display_name,
-                    'lat': flag.lat,
-                    'lon': flag.lon,
-                    'level': flag.level,
-                    'status': flag.status,
-                    'radius_meters': flag.radius_meters,
-                    'construction_time_minutes': flag.construction_time_minutes,
-                    'flag_color': {
-                        'name': flag_color.display_name if flag_color else None,
-                        'hex_color': flag_color.hex_color if flag_color else '#FFFFFF'
-                    }
-                }
-            })
-            
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+                body = json.loads(request.body or b"{}")
+                name = body.get("name")
+            except Exception:
+                name = None
+        if lat is None or lon is None:
+            return JsonResponse({"success": False, "ok": False, "error": "lat and lon are required"}, status=400)
+        flag = svc_place_flag(request.user, lat, lon, name=name)
+        _broadcast_flag_event(flag, "created")
+        return JsonResponse({"success": True, "ok": True, "data": _serialize_flag(flag)}, status=201)
+    except FlagError as fe:
+        return JsonResponse({"success": False, "ok": False, "error": str(fe), "code": getattr(fe, "code", "flag_error")}, status=400)
+    except Exception:
+        return JsonResponse({"success": False, "ok": False, "error": "Failed to place flag"}, status=500)
 
 
 @login_required
 @require_http_methods(["GET"])
-def api_nearby_flags(request):
-    """Get territory flags near player location"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get radius from query params (default 2km)
-        radius_km = float(request.GET.get('radius', 2.0))
-        radius_degrees = radius_km / 111.0  # Rough conversion
-        
-        # Find nearby flags - simplified query
-        nearby_flags = TerritoryFlag.objects.filter(
-            lat__range=(character.lat - radius_degrees, character.lat + radius_degrees),
-            lon__range=(character.lon - radius_degrees, character.lon + radius_degrees)
-        ).select_related('owner', 'flag_color').exclude(
-            status='destroyed'
-        )
-        
-        flags_data = []
-        for flag in nearby_flags:
-            try:
-                distance = character.distance_to(flag.lat, flag.lon)
-                
-                flag_data = {
-                    'id': str(flag.id),
-                    'name': flag.custom_name or f"Flag {flag.id}",
-                    'owner': flag.owner.name,
-                    'is_mine': flag.owner == character,
-                    'lat': flag.lat,
-                    'lon': flag.lon,
-                    'level': flag.level,
-                    'status': flag.status,
-                    'distance_meters': round(distance),
-                    'radius_meters': flag.radius_meters,
-                    'flag_color': {
-                        'name': flag.flag_color.display_name if flag.flag_color else 'Default',
-                        'hex_color': flag.flag_color.hex_color if flag.flag_color else '#FF4444'
-                    }
-                }
-                
-                flags_data.append(flag_data)
-            except Exception as flag_error:
-                # Skip this flag if there's an error processing it
-                print(f"Error processing flag {flag.id}: {flag_error}")
-                continue
-        
-        return JsonResponse({
-            'success': True,
-            'flags': flags_data
-        })
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        import traceback
-        print(f"API Error: {e}")
-        print(traceback.format_exc())
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_collect_flag_revenue(request, flag_id):
-    """Collect revenue from a territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id, owner=character)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found or not owned by you'
-            }, status=404)
-        
-        # Collect revenue
-        revenue_collected = flag.collect_revenue()
-        
-        return JsonResponse({
-            'success': True,
-            'message': f'Collected {revenue_collected} gold revenue',
-            'revenue_collected': revenue_collected,
-            'new_gold_total': character.gold
-        })
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_pay_flag_upkeep(request, flag_id):
-    """Pay upkeep for a territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id, owner=character)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found or not owned by you'
-            }, status=404)
-        
-        # Pay upkeep
-        success, message = flag.pay_upkeep()
-        
-        if success:
-            return JsonResponse({
-                'success': True,
-                'message': message,
-                'new_gold_total': character.gold,
-                'upkeep_due_at': flag.upkeep_due_at.isoformat()
-            })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_upgrade_flag(request, flag_id):
-    """Upgrade a territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id, owner=character)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found or not owned by you'
-            }, status=404)
-        
-        # Check if can upgrade
-        can_upgrade, message = flag.can_upgrade()
-        if not can_upgrade:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-        # Get upgrade cost
-        upgrade_cost = flag.get_upgrade_cost()
-        if not upgrade_cost:
-            return JsonResponse({
-                'success': False,
-                'error': 'No upgrade available'
-            }, status=400)
-        
-        with transaction.atomic():
-            # Check resources
-            if character.gold < upgrade_cost['gold']:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {upgrade_cost["gold"]} gold (have {character.gold})'
-                }, status=400)
-            
-            # Check materials
-            try:
-                wood_item = character.inventory.get(item_template__name='wood')
-                if wood_item.quantity < upgrade_cost['wood']:
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Need {upgrade_cost["wood"]} wood (have {wood_item.quantity})'
-                    }, status=400)
-            except:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {upgrade_cost["wood"]} wood (have 0)'
-                }, status=400)
-            
-            try:
-                stone_item = character.inventory.get(item_template__name='stone')
-                if stone_item.quantity < upgrade_cost['stone']:
-                    return JsonResponse({
-                        'success': False,
-                        'error': f'Need {upgrade_cost["stone"]} stone (have {stone_item.quantity})'
-                    }, status=400)
-            except:
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Need {upgrade_cost["stone"]} stone (have 0)'
-                }, status=400)
-            
-            # Start upgrade
-            success, message = flag.start_upgrade()
-            
-            if success:
-                return JsonResponse({
-                    'success': True,
-                    'message': message,
-                    'new_level': flag.level,
-                    'new_gold_total': character.gold
-                })
-            else:
-                return JsonResponse({
-                    'success': False,
-                    'error': message
-                }, status=400)
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_attack_flag(request, flag_id):
-    """Attack an enemy territory flag - PK style unrestricted combat (24/7 attacks allowed)"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        data = json.loads(request.body)
-        damage_amount = int(data.get('damage', 20))  # Default attack damage
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found'
-            }, status=404)
-        
-        # Apply damage
-        success, message = flag.apply_damage(character, damage_amount)
-        
-        if success:
-            return JsonResponse({
-                'success': True,
-                'message': message,
-                'flag': {
-                    'id': str(flag.id),
-                    'current_hp': flag.current_hp,
-                    'max_hp': flag.max_hp,
-                    'status': flag.status,
-                    'can_capture': flag.can_capture(character)[0]
-                }
-            })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_capture_flag(request, flag_id):
-    """Capture an enemy territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found'
-            }, status=404)
-        
-        # Capture flag
-        success, message = flag.capture(character)
-        
-        if success:
-            return JsonResponse({
-                'success': True,
-                'message': message,
-                'flag': {
-                    'id': str(flag.id),
-                    'owner': flag.owner.name,
-                    'level': flag.level,
-                    'current_hp': flag.current_hp,
-                    'max_hp': flag.max_hp,
-                    'status': flag.status,
-                    'radius_meters': flag.radius_meters
-                },
-                'new_gold_total': character.gold
-            })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
-
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_repair_flag(request, flag_id):
-    """Repair damage to a territory flag"""
-    try:
-        character = Character.objects.get(user=request.user)
-        
-        data = json.loads(request.body)
-        repair_amount = int(data.get('repair_amount', 20))  # Default repair amount
-        
-        # Get flag
-        try:
-            flag = TerritoryFlag.objects.get(id=flag_id, owner=character)
-        except TerritoryFlag.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Flag not found or not owned by you'
-            }, status=404)
-        
-        # Repair flag
-        success, message = flag.repair(repair_amount)
-        
-        if success:
-            return JsonResponse({
-                'success': True,
-                'message': message,
-                'flag': {
-                    'current_hp': flag.current_hp,
-                    'max_hp': flag.max_hp,
-                    'status': flag.status
-                },
-                'new_gold_total': character.gold
-            })
-        else:
-            return JsonResponse({
-                'success': False,
-                'error': message
-            }, status=400)
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+def flags_list(request):
+    # Use player's current position as center
+    character = getattr(request.user, "character", None)
+    if character is None:
+        return JsonResponse({"success": False, "ok": False, "error": "No character found"}, status=400)
+    radius_m = _parse_float(request, "radius_m", 750.0)
+    flags = svc_list_flags_near(character.lat, character.lon, radius_m)
+    return JsonResponse({"success": True, "ok": True, "data": {"flags": flags}})
 
 
 @login_required
 @require_http_methods(["GET"])
-def api_flag_territories_geojson(request):
-    """Get territory boundaries as GeoJSON for map rendering"""
+def flag_detail(request, flag_id):
+    from .models import TerritoryFlag
     try:
-        character = Character.objects.get(user=request.user)
-        
-        # Get radius for search
-        radius_km = float(request.GET.get('radius', 5.0))  # Default 5km
-        radius_degrees = radius_km / 111.0
-        
-        # Find nearby territory zones
-        nearby_zones = TerritoryZone.objects.filter(
-            center_lat__range=(character.lat - radius_degrees, character.lat + radius_degrees),
-            center_lon__range=(character.lon - radius_degrees, character.lon + radius_degrees)
-        ).select_related('flag', 'flag__owner', 'flag__flag_color')
-        
-        features = []
-        for zone in nearby_zones:
-            if zone.flag.status == 'destroyed':
-                continue
-                
-            # Create GeoJSON feature for circular territory
-            # Approximate circle with polygon
-            points = []
-            center_lat = zone.center_lat
-            center_lon = zone.center_lon
-            radius_deg = zone.radius_meters / 111000.0  # Convert meters to degrees
-            
-            # Create circle with 16 points
-            for i in range(16):
-                angle = (i * 2 * math.pi) / 16
-                lat = center_lat + radius_deg * math.cos(angle)
-                lon = center_lon + radius_deg * math.sin(angle) / math.cos(math.radians(center_lat))
-                points.append([lon, lat])  # GeoJSON uses [lon, lat]
-            points.append(points[0])  # Close the polygon
-            
-            feature = {
-                'type': 'Feature',
-                'geometry': {
-                    'type': 'Polygon',
-                    'coordinates': [points]
-                },
-                'properties': {
-                    'flag_id': str(zone.flag.id),
-                    'owner': zone.flag.owner.name,
-                    'name': zone.flag.display_name,
-                    'level': zone.flag.level,
-                    'status': zone.flag.status,
-                    'radius_meters': zone.radius_meters,
-                    'is_own': zone.flag.owner == character,
-                    'flag_color': zone.flag.flag_color.hex_color if zone.flag.flag_color else '#FFFFFF'
-                }
-            }
-            
-            features.append(feature)
-        
-        geojson = {
-            'type': 'FeatureCollection',
-            'features': features
-        }
-        
-        return JsonResponse({
-            'success': True,
-            'geojson': geojson
-        })
-        
-    except Character.DoesNotExist:
-        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        f = TerritoryFlag.objects.get(id=flag_id)
+    except TerritoryFlag.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    return JsonResponse({"ok": True, "flag": _serialize_flag(f)})
+
+
+@login_required
+@require_http_methods(["POST"])
+@transaction.atomic
+def attack_flag(request, flag_id):
+    lat = _parse_float(request, "lat")
+    lon = _parse_float(request, "lon")
+    if lat is None or lon is None:
+        return HttpResponseBadRequest("lat and lon are required")
+    result = svc_attack_flag(request.user, flag_id, lat, lon)
+    # Expect service to return damage/results, and we’ll fetch latest flag state for broadcast
+    from .models import TerritoryFlag
+    flag = TerritoryFlag.objects.get(id=flag_id)
+    _broadcast_flag_event(flag, "under_attack", extra=result)
+    return JsonResponse({"ok": True, "result": result, "flag": _serialize_flag(flag)})
+
+
+@login_required
+@require_http_methods(["POST"])
+@transaction.atomic
+def capture_flag(request, flag_id):
+    lat = _parse_float(request, "lat", None)
+    lon = _parse_float(request, "lon", None)
+    result = svc_capture_flag(request.user, flag_id, lat, lon) if lat is not None and lon is not None else svc_capture_flag(request.user, flag_id, 0, 0)
+    from .models import TerritoryFlag
+    flag = TerritoryFlag.objects.get(id=flag_id)
+    _broadcast_flag_event(flag, "captured", extra=result)
+    return JsonResponse({"ok": True, "result": result, "flag": _serialize_flag(flag)})
+
+
+@login_required
+@require_http_methods(["POST"])
+@transaction.atomic
+def collect_revenue(request, flag_id):
+    result = svc_collect_revenue(request.user, flag_id)
+    from .models import TerritoryFlag
+    flag = TerritoryFlag.objects.get(id=flag_id)
+    _broadcast_flag_event(flag, "revenue_collected", extra=result)
+    return JsonResponse({"ok": True, "result": result, "flag": _serialize_flag(flag)})
+
+
+@login_required
+@require_http_methods(["PATCH"])
+@transaction.atomic
+def update_flag(request, flag_id):
+    from .models import TerritoryFlag
+    try:
+        flag = TerritoryFlag.objects.select_for_update().get(id=flag_id)
+    except TerritoryFlag.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    if flag.owner_id != request.user.id:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    # Parse JSON body for updates (currently only name)
+    try:
+        import json
+        data = json.loads(request.body or b"{}")
+    except Exception:
+        data = {}
+    name = data.get("name")
+    is_private = data.get("is_private")
+    changed_fields = []
+    if isinstance(name, str):
+        flag.name = name[:64]
+        changed_fields.append("name")
+    if isinstance(is_private, bool):
+        # Only owner can change privacy (checked above)
+        flag.is_private = is_private
+        changed_fields.append("is_private")
+    if changed_fields:
+        flag.save(update_fields=changed_fields + ["updated_at"])
+        _broadcast_flag_event(flag, "updated", extra={"fields": changed_fields})
+    return JsonResponse({"ok": True, "flag": _serialize_flag(flag)})
+
+
+@login_required
+@require_http_methods(["DELETE"])
+@transaction.atomic
+def delete_flag(request, flag_id):
+    from .models import TerritoryFlag
+    try:
+        flag = TerritoryFlag.objects.select_for_update().get(id=flag_id)
+    except TerritoryFlag.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    if flag.owner_id != request.user.id:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    flag_id_str = str(flag.id)
+    flag.delete()
+    # Broadcast a deletion event with minimal info
+    try:
+        layer = get_channel_layer()
+        payload = {"type": "flag_event", "event": "deleted", "flag": {"id": flag_id_str}}
+        from .utils.geo import tiles_within_radius
+        for g in tiles_within_radius(getattr(request.user.character, 'lat', 0.0), getattr(request.user.character, 'lon', 0.0), 800):
+            async_to_sync(layer.group_send)(g, {"type": "flag.event", "payload": payload})
+    except Exception:
+        pass
+    return JsonResponse({"ok": True, "deleted": True, "id": flag_id_str})
+
+
+# FlagRun deprecated: start_flag_run removed
+    """Start or resume a PK-style run at a flag: spawn NPCs inside the circle and track progress."""
+    from .models import TerritoryFlag, FlagRun
+    try:
+        flag = TerritoryFlag.objects.select_for_update().get(id=flag_id)
+    except TerritoryFlag.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    if flag.owner_id != request.user.id:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    character = getattr(request.user, 'character', None)
+    if character is None:
+        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
+
+    # If an active run exists, return it
+    run = FlagRun.objects.filter(character=character, flag=flag, status='active').first()
+    if run:
+        return JsonResponse({"ok": True, "run": {
+            "id": str(run.id), "status": run.status, "target": run.target_count,
+            "defeated": run.defeated_count, "remaining": run.remaining,
+            "flag_id": str(flag.id)
+        }})
+
+    # Create new run; scale target by flag level
+    target = max(3, 3 + int(getattr(flag, 'level', 1)) * 2)
+    run = FlagRun.objects.create(character=character, flag=flag, target_count=target, defeated_count=0, status='active')
+    monster_ids = spawn_monsters_in_flag(flag, target)
+    run.active_monster_ids = monster_ids
+    run.save(update_fields=['active_monster_ids', 'updated_at'])
+
+    return JsonResponse({"ok": True, "run": {
+        "id": str(run.id), "status": run.status, "target": run.target_count,
+        "defeated": run.defeated_count, "remaining": run.remaining,
+        "flag_id": str(flag.id)
+    }})
+
+
+# FlagRun deprecated: flag_run_status removed
+    from .models import TerritoryFlag, FlagRun
+    try:
+        flag = TerritoryFlag.objects.get(id=flag_id)
+    except TerritoryFlag.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    if flag.owner_id != request.user.id:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+    character = getattr(request.user, 'character', None)
+    if character is None:
+        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
+    run = FlagRun.objects.filter(character=character, flag=flag).order_by('-created_at').first()
+    if not run:
+        return JsonResponse({"ok": True, "run": None})
+    return JsonResponse({"ok": True, "run": {
+        "id": str(run.id), "status": run.status, "target": run.target_count,
+        "defeated": run.defeated_count, "remaining": run.remaining,
+        "flag_id": str(flag.id), "cleared_at": run.cleared_at.isoformat() if run.cleared_at else None
+    }})
+
+
+# FlagRun deprecated: jump_to_next_flag_run removed
+    """Teleport player to the next owned flag (wrap-around). Optionally start a run."""
+    try:
+        import json
+        body = json.loads(request.body or b"{}")
+    except Exception:
+        body = {}
+    start = bool(body.get('start', False))
+
+    character = getattr(request.user, 'character', None)
+    if character is None:
+        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
+
+    current_flag_id = body.get('current_flag_id')
+    next_flag = find_next_flag_to_run(request.user, current_flag_id)
+    if not next_flag:
+        return JsonResponse({"ok": False, "error": "no_flags"}, status=400)
+
+    # Teleport
+    character.lat = next_flag.lat
+    character.lon = next_flag.lon
+    character.save(update_fields=['lat', 'lon'])
+
+    run_payload = None
+    if start:
+        from .models import FlagRun
+        run = FlagRun.objects.filter(character=character, flag=next_flag, status='active').first()
+        if not run:
+            target = max(3, 3 + int(getattr(next_flag, 'level', 1)) * 2)
+            run = FlagRun.objects.create(character=character, flag=next_flag, target_count=target, defeated_count=0, status='active')
+            ids = spawn_monsters_in_flag(next_flag, target)
+            run.active_monster_ids = ids
+            run.save(update_fields=['active_monster_ids', 'updated_at'])
+        run_payload = {"id": str(run.id), "status": run.status, "target": run.target_count, "defeated": run.defeated_count, "remaining": run.remaining, "flag_id": str(next_flag.id)}
+
+    return JsonResponse({
+        "ok": True,
+        "location": {"lat": character.lat, "lon": character.lon},
+        "flag": _serialize_flag(next_flag),
+        "run": run_payload
+    })
+

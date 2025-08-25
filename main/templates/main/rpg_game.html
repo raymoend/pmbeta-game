@@ -9,6 +9,7 @@
     <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
     <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
     
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -82,6 +83,7 @@
         .hp-bar { background: #e74c3c; }
         .mana-bar { background: #3498db; }
         .stamina-bar { background: #f39c12; }
+        .xp-bar { background: #8e44ad; }
         
         .level-gold {
             margin-left: auto;
@@ -132,6 +134,16 @@
         #map {
             flex: 1;
             height: 100%;
+            position: relative;
+        }
+        
+        /* Vignette overlay for PK feel */
+        .vignette {
+            pointer-events: none;
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(0,0,0,0.25) 100%);
+            z-index: 50;
         }
         
         /* Side Panel */
@@ -431,6 +443,30 @@
             background: rgba(46, 204, 113, 0.9);
         }
         
+        /* Item drop animation */
+        .item-drop {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(17,24,39,0.85);
+            border: 1px solid rgba(255,255,255,0.12);
+            padding: 6px 8px;
+            border-radius: 8px;
+            color: #e5e7eb;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            animation: dropFade 1.2s ease-out forwards;
+            z-index: 1600;
+        }
+        .item-drop img { width: 18px; height: 18px; }
+        .item-drop .item-quantity { font-weight: 700; }
+        @keyframes dropFade {
+            0% { transform: translateY(0) scale(0.95); opacity: 0; }
+            20% { opacity: 1; }
+            80% { transform: translateY(-24px) scale(1.02); opacity: 1; }
+            100% { transform: translateY(-28px) scale(0.98); opacity: 0; }
+        }
+        
         @keyframes slideIn {
             from {
                 transform: translateX(100%);
@@ -596,6 +632,67 @@
             box-shadow: none;
         }
         
+        /* Victory Popup */
+        .victory-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.75);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2500;
+        }
+        .victory-card {
+            background: linear-gradient(135deg, #1f2937, #111827);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 22px 20px;
+            width: 92%;
+            max-width: 460px;
+            color: #e5e7eb;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+        }
+        .victory-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #22c55e;
+            text-align: center;
+            margin-bottom: 6px;
+        }
+        .victory-sub {
+            text-align: center;
+            color: #9ca3af;
+            margin-bottom: 12px;
+            font-size: 0.95rem;
+        }
+        .drops-list {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-top: 10px;
+        }
+        .drop-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px dashed rgba(255,255,255,0.07);
+        }
+        .drop-item:last-child { border-bottom: none; }
+        .victory-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .victory-actions .btn {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+        .btn-close-victory { background: #2563eb; color: #fff; }
+        .btn-inventory { background: #4b5563; color: #fff; }
+        
         /* Responsive */
         @media (max-width: 768px) {
             .side-panel {
@@ -636,6 +733,8 @@
     </style>
 </head>
 <body>
+    <!-- Hidden CSRF token for fetch() calls -->
+    <form style="display:none;">{% csrf_token %}</form>
     <div class="loading-screen" id="loadingScreen">
         <div class="loading-spinner"></div>
     </div>
@@ -669,6 +768,14 @@
                     </div>
                     <span>{{ character.current_stamina }}/{{ character.max_stamina }}</span>
                 </div>
+                
+                <div class="stat-bar">
+                    <span class="stat-label">XP</span>
+                    <div class="bar">
+                        <div class="bar-fill xp-bar" id="xpBar" style="width: 0%"></div>
+                    </div>
+                    <span id="xpText">0/0</span>
+                </div>
             </div>
             
             <div class="level-gold">
@@ -694,6 +801,8 @@
                     <button class="tab-button active" onclick="showTab('inventory')">Inventory</button>
                     <button class="tab-button" onclick="showTab('character')">Character</button>
                     <button class="tab-button" onclick="showTab('nearby')">Players</button>
+                    <button class="tab-button" onclick="showTab('log')">Log</button>
+                    <button class="tab-button" onclick="showTab('flags')">Flags</button>
                     <button class="tab-button" onclick="showTab('crafting')">Crafting</button>
                 </div>
                 
@@ -701,6 +810,9 @@
                     <!-- Inventory Tab -->
                     <div id="inventory-tab" class="tab-panel active">
                         <h3>Inventory</h3>
+                        <div style="display:flex; gap:8px; margin:8px 0 12px;">
+                            <button id="heal-berries-btn" class="btn" style="background:#22c55e;color:white;" onclick="healWithBerries()">🍓 Heal with berries</button>
+                        </div>
                         <div class="inventory-grid" id="inventoryGrid">
                             <!-- Inventory slots will be populated by JavaScript -->
                         </div>
@@ -754,6 +866,22 @@
                             <!-- Populated by JavaScript -->
                         </div>
                     </div>
+
+                    <!-- Log Tab -->
+                    <div id="log-tab" class="tab-panel">
+                        <h3>Combat Log</h3>
+                        <div id="combatLogList" style="max-height: 300px; overflow-y: auto; font-size: 0.9rem; color: #e5e7eb;"></div>
+                    </div>
+
+                    <!-- Flags Tab -->
+                    <div id="flags-tab" class="tab-panel">
+                        <h3>Flags</h3>
+                        <div style="display:flex; gap:8px; margin:8px 0 12px;">
+                            <button class="btn" style="background:#10b981;color:white;" onclick="uiPlaceFlagAtCenter()">Place at map center</button>
+                            <button class="btn" style="background:#3b82f6;color:white;" onclick="uiPlaceFlagAtPlayer()">Place at player</button>
+                        </div>
+                        <div id="flagsList" style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 340px; overflow-y: auto;"></div>
+                    </div>
                     
                     <!-- Crafting Tab -->
                     <div id="crafting-tab" class="tab-panel">
@@ -805,6 +933,17 @@
 
     <!-- Message Area -->
     <div class="message-area" id="messageArea"></div>
+    {% if messages %}
+    <script>
+      window.addEventListener('load', function() {
+        try {
+          {% for message in messages %}
+            if (typeof showMessage === 'function') { showMessage("{{ message|escapejs }}", "{{ message.tags|default:'info' }}"); }
+          {% endfor %}
+        } catch(e) {}
+      });
+    </script>
+    {% endif %}
 
     <!-- Settings Modal -->
     <div class="combat-modal" id="settingsModal" style="display: none;">
@@ -813,6 +952,9 @@
             <div style="text-align: left; margin: 20px 0;">
                 <button class="btn btn-large" onclick="openRelocateModal()" style="width: 100%; margin-bottom: 10px; background: #3498db; color: white;">
                     📍 Relocate GPS
+                </button>
+                <button class="btn btn-large" onclick="resetMapClient()" style="width: 100%; margin-bottom: 10px; background: #6b7280; color: white;">
+                    🧹 Clear map (client)
                 </button>
                 <button class="btn btn-large" onclick="logout()" style="width: 100%; background: #e74c3c; color: white;">
                     🚪 Logout
@@ -889,38 +1031,80 @@
             websocket: null,
             nearbyPlayers: [],
             monsters: [],
-            activeCombat: null
+            activeCombat: null,
+            flags: [],
+            flagMarkers: {},
+            hexOrigin: null, // { x, y } in Web Mercator meters for stable lattice anchoring
+            autoCombatTimer: null,
+            autoCombatBusy: false,
+            hpTickerEl: null,
+            combatLog: []
         };
+        const CURRENT_USER_ID = {{ request.user.id|default:'null' }};
+        // Path to flag icon (SVG). Place your file at this path, or update the URL accordingly.
+        const FLAG_GIF_URL = '/static/img/flag_green.svg';
 
         // Initialize Mapbox
         mapboxgl.accessToken = '{{ game_settings.MAPBOX_ACCESS_TOKEN }}';
 
+        // Flags now use Django API under /api/flags/
+
         function initializeMap() {
+            // Basic guard: ensure Mapbox GL loaded
+            if (typeof mapboxgl === 'undefined') {
+                console.error('Mapbox GL JS failed to load');
+                showMessage('Map failed to load (Mapbox script). Check your network or ad-blockers.', 'error');
+                const ls = document.getElementById('loadingScreen');
+                if (ls) ls.style.display = 'none';
+                return;
+            }
+            if (!'{{ game_settings.MAPBOX_ACCESS_TOKEN }}') {
+                console.error('Missing MAPBOX_ACCESS_TOKEN');
+                showMessage('Missing Mapbox token. Please configure MAPBOX_ACCESS_TOKEN.', 'error');
+            }
+
             gameState.map = new mapboxgl.Map({
                 container: 'map',
                 style: '{{ game_settings.MAPBOX_STYLE }}',
                 center: [gameState.character.lon, gameState.character.lat],
-                zoom: 15, // Fixed zoom level
+                zoom: 17.5, // initial zoom
+                minZoom: 16,
+                maxZoom: 17.5,
                 pitch: 0,
                 bearing: 0,
                 interactive: true, // Enable interactions for tap-to-move
-                scrollZoom: false, // Disable scroll wheel zoom
+                scrollZoom: true, // allow scroll zoom within bounds
                 boxZoom: false, // Disable box zoom
                 dragRotate: false, // Disable rotation
-                touchZoomRotate: false, // Disable touch zoom/rotate
+                touchZoomRotate: true, // allow pinch zoom
                 doubleClickZoom: false, // Disable double-click zoom
-                keyboard: false // Disable keyboard navigation
+                keyboard: true // Allow +/- key zoom within bounds
+            });
+
+            // Surface Mapbox runtime errors
+            gameState.map.on('error', function(e) {
+                console.error('Mapbox error:', e && e.error ? e.error : e);
+                showMessage('Map error: ' + (e && e.error && e.error.message ? e.error.message : 'See console'), 'error');
+                const ls = document.getElementById('loadingScreen');
+                if (ls) ls.style.display = 'none';
             });
 
             gameState.map.on('load', function() {
                 // Add player marker
                 addPlayerMarker();
-                
+
+                // Draw hex grid and keep it updated
+                drawHexGrid();
+                gameState.map.on('moveend', drawHexGrid);
+
                 // Load initial game data
                 loadGameData();
                 
                 // Hide loading screen
                 document.getElementById('loadingScreen').style.display = 'none';
+                
+                // Add zoom controls (compass hidden)
+                try { gameState.map.addControl(new mapboxgl.NavigationControl({ showCompass: false })); } catch(e) {}
                 
                 // Initialize WebSocket
                 initializeWebSocket();
@@ -930,7 +1114,23 @@
                 
                 // Add tap-to-move functionality
                 initializeTapToMove();
+
+                // Ensure map resizes on layout changes
+                try { if (gameState.map && gameState.map.resize) gameState.map.resize(); } catch(e) {}
+                setTimeout(() => { try { if (gameState.map && gameState.map.resize) gameState.map.resize(); } catch(e) {} }, 150);
             });
+
+            // Safety: hide loading after timeout if map never loads
+            setTimeout(() => {
+                const ls = document.getElementById('loadingScreen');
+                if (ls && ls.style.display !== 'none') {
+                    console.warn('Map load timeout; hiding loading overlay.');
+                    ls.style.display = 'none';
+                }
+            }, 5000);
+
+            // Resize handler
+            window.addEventListener('resize', () => { try { if (gameState.map && gameState.map.resize) gameState.map.resize(); } catch(e) {} });
         }
 
         function addPlayerMarker() {
@@ -941,6 +1141,121 @@
             })
             .setLngLat([gameState.character.lon, gameState.character.lat])
             .addTo(gameState.map);
+        }
+
+        // --- Main draw function ---
+        function drawHexGrid() {
+            if (!gameState.map) return;
+            const bounds = gameState.map.getBounds();
+
+            // Convert bounds to Web Mercator meters
+            const [minX, minY] = project(bounds.getWest(), bounds.getSouth());
+            const [maxX, maxY] = project(bounds.getEast(), bounds.getNorth());
+
+            const features = [];
+
+            // Hex dimensions (flat-topped)
+            const r = 650;                 // hex radius in meters
+            const w = 2 * r;               // width
+            const h = Math.sqrt(3) * r;    // height
+            const xStep = 1.5 * r;         // correct column step (equals 0.75 * w)
+            const yStep = h;               // correct row step
+
+            // Use a global lattice origin (0,0) in Web Mercator meters so client matches server hex IDs
+            const originX = 0;
+            const originY = 0;
+
+            // Compute starting X aligned to global lattice that still covers current bounds
+            const startX = Math.floor((minX - originX) / xStep) * xStep + originX;
+
+            // Iterate columns first; stagger odd columns by h/2 for flat-top hexes
+            for (let x = startX; x <= maxX + xStep; x += xStep) {
+                const col = Math.floor(((x - originX) + xStep/2) / xStep);
+                // For each column, compute a base Y that ensures coverage even with stagger offset
+                const yOffset = (col % 2 ? h / 2 : 0);
+                const startYForCol = Math.floor((minY - originY - yOffset) / yStep) * yStep + originY;
+                for (let y = startYForCol; y <= maxY + yStep; y += yStep) {
+                    const cx = x;
+                    const cy = y + yOffset;
+
+                    // Quick cull outside current bounds (with small buffer)
+                    if (cx < minX - xStep || cx > maxX + xStep || cy < minY - yStep || cy > maxY + yStep) continue;
+
+                    // Build circle polygon to avoid white seams between hexes
+                    const [lonC, latC] = unproject(cx, cy);
+                    const rCircle = r * 1.02; // slight growth to ensure overlap
+                    const circleGeom = circlePolygon(lonC, latC, rCircle, 60);
+
+                    const row = Math.round((y - originY) / yStep);
+                    const q = col;
+                    const rAxial = row - ((q - (q & 1)) / 2);
+                    features.push({
+                        type: 'Feature',
+                        geometry: circleGeom,
+                        properties: { q: q, r: rAxial }
+                    });
+                }
+            }
+
+            // Update or add source
+            if (!gameState.map.getSource('grid')) {
+                gameState.map.addSource('grid', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features }
+                });
+            } else {
+                gameState.map.getSource('grid').setData({
+                    type: 'FeatureCollection',
+                    features
+                });
+            }
+
+            // Add or update layer
+            if (!gameState.map.getLayer('grid-hex')) {
+                gameState.map.addLayer({
+                    id: 'grid-hex',
+                    type: 'fill',
+                    source: 'grid',
+                    paint: {
+                        'fill-color': '#6b6b6b',
+                        'fill-opacity': 0.0,
+                        'fill-antialias': false
+                    }
+                });
+            } else {
+                try {
+                    gameState.map.setPaintProperty('grid-hex', 'fill-opacity', 0.0);
+                    gameState.map.setPaintProperty('grid-hex', 'fill-antialias', false);
+                } catch (e) { /* no-op */ }
+            }
+            // Keep the hex grid UNDER territory layers for correct visual stacking
+            try {
+                if (gameState.map.getLayer('territories_fill')) {
+                    gameState.map.moveLayer('grid-hex', 'territories_fill');
+                }
+            } catch (e) { /* safe no-op */ }
+
+            // Add or update grid outline lines to show lattice without fills (prevents seam triangles)
+            if (!gameState.map.getLayer('grid-hex-outline')) {
+                gameState.map.addLayer({
+                    id: 'grid-hex-outline',
+                    type: 'line',
+                    source: 'grid',
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: {
+                        'line-color': '#6b6b6b',
+                        'line-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.12, 16, 0.06],
+                        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.4, 16, 0.7],
+                        'line-blur': 0.2
+                    }
+                });
+            }
+            // Ensure outline sits beneath territories as well
+            try {
+                if (gameState.map.getLayer('territories_fill')) {
+                    gameState.map.moveLayer('grid-hex-outline', 'territories_fill');
+                }
+            } catch (e) { /* safe no-op */ }
         }
 
         function loadGameData() {
@@ -980,18 +1295,140 @@
         }
         
         function fetchNearbyFlags() {
-            fetch('/api/flags/nearby/')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        console.log('🚩 Loaded existing flags:', data.flags);
-                        // Add each existing flag to the map
-                        data.flags.forEach(flag => {
-                            addFlagToMap(flag);
-                        });
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            const opts = { method: 'GET', headers: { 'X-CSRFToken': csrf }, credentials: 'same-origin' };
+            // Directly call the working endpoint to avoid 404 noise
+            const lat = gameState?.character?.lat;
+            const lon = gameState?.character?.lon;
+            const q = (typeof lat === 'number' && typeof lon === 'number') ? `?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&radius_m=2000` : '';
+            fetch(`/api/flags/near/${q}`, opts)
+              .then(res => {
+                if (!res.ok) throw new Error('Flags request failed: ' + res.status);
+                return res.json();
+              })
+              .then(data => {
+                if (!data || data.success === false) {
+                  console.warn('Flag API error:', data?.error);
+                  return;
+                }
+                const flags = (data.data && (data.data.flags || data.data)) || [];
+                console.log('🚩 Loaded flags:', flags);
+                // Normalize to frontend shape
+const normalized = flags.map(f => ({
+                    id: String(f.id),
+                    name: f.name || `Flag`,
+                    lat: f.lat,
+                    lon: f.lon,
+                    level: f.level || 1,
+                    owner_id: f.owner_id,
+                    is_mine: f.owner_id === CURRENT_USER_ID,
+                    status: f.status || 'active',
+                    is_private: !!f.is_private,
+                    color: f.color || null
+                }));
+                gameState.flags = normalized;
+
+                // Reconcile markers: remove missing, update existing, add new
+                const currentIds = new Set(normalized.map(f => f.id));
+                // Remove markers that are no longer present
+                Object.keys(gameState.flagMarkers || {}).forEach(id => {
+                    if (!currentIds.has(id)) {
+                        try { gameState.flagMarkers[id].remove(); } catch(e) {}
+                        delete gameState.flagMarkers[id];
                     }
-                })
-                .catch(error => console.error('Error fetching flags:', error));
+                });
+                // Add or update markers
+                normalized.forEach(flag => {
+                    const existing = gameState.flagMarkers[flag.id];
+                    if (existing) {
+                        try { existing.setLngLat([flag.lon, flag.lat]); } catch(e) {}
+                    } else {
+                        addFlagToMap(flag);
+                    }
+                });
+
+                const terrFill = 'territories_fill';
+                const terrGlow = 'territories_glow';
+                const terrBorder = 'territories_border';
+                // Also build hex outlines for clarity
+                const terrSrcId = 'territories_source';
+                const hexData = buildHexGeo(gameState.flags);
+                const unionedHexData = dissolveHexesByOwner(hexData);
+                if (!gameState.map.getSource(terrSrcId)) {
+                    gameState.map.addSource(terrSrcId, { type: 'geojson', data: unionedHexData });
+                } else {
+                    gameState.map.getSource(terrSrcId).setData(unionedHexData);
+                }
+                // Update presence state based on latest flags
+                checkTerritoryPresence();
+                try { renderFlagsList(); } catch (e) {}
+
+                if (!gameState.map.getLayer(terrFill)) {
+                    // Use hex polygons for seamless connected territories
+                    gameState.map.addLayer({
+                        id: terrFill,
+                        type: 'fill',
+                        source: terrSrcId,
+                        paint: {
+'fill-color': ['case',
+                                ['all', ['has','color'], ['!=', ['get','color'], '']], ['get','color'],
+                                ['==', ['get','status'], 'capturable'], '#f1c40f',
+                                ['==', ['get','owner_id'], CURRENT_USER_ID], '#2ecc71',
+                                '#e74c3c'
+                            ],
+                            'fill-opacity': 0.25,
+                            'fill-antialias': true
+                        },
+                        minzoom: 10
+                    });
+                } else {
+                    // Ensure the fill uses the hex source
+                    try { gameState.map.getLayer(terrFill) && gameState.map.moveLayer(terrFill); } catch(e) {}
+                }
+                // Ensure grid layer stays beneath territories
+                try { if (gameState.map.getLayer('grid-hex')) gameState.map.moveLayer('grid-hex', terrFill); } catch (e) {}
+                // Owner-colored glowing borders like PK, using hex polygons.
+                if (!gameState.map.getLayer(terrBorder)) {
+                    gameState.map.addLayer({
+                        id: terrBorder,
+                        type: 'line',
+                        source: terrSrcId,
+                        layout: { 'line-join': 'round', 'line-cap': 'round' },
+                        paint: {
+'line-color': ['case',
+                                ['all', ['has','color'], ['!=', ['get','color'], '']], ['get','color'],
+                                ['==', ['get','status'], 'capturable'], '#f1c40f',
+                                ['==', ['get','owner_id'], CURRENT_USER_ID], '#2ecc71',
+                                '#e74c3c'
+                            ],
+                            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 15, 3],
+                            'line-blur': 0.5,
+                            'line-opacity': 0.9
+                        },
+                        minzoom: 10
+                    });
+                }
+                // Subtle outer glow line for extra pop, using hex polygons.
+                if (!gameState.map.getLayer(terrGlow)) {
+                    gameState.map.addLayer({
+                        id: terrGlow,
+                        type: 'line',
+                        source: terrSrcId,
+                        paint: {
+                            'line-color': ['case',
+                                ['==', ['get','status'], 'capturable'], '#f39c12',
+                                ['==', ['get','owner_id'], CURRENT_USER_ID], '#27ae60',
+                                '#c0392b'
+                            ],
+                            'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 6],
+                            'line-blur': 6,
+                            'line-opacity': 0.25
+                        },
+                        minzoom: 10
+                    });
+                }
+              })
+              .catch(error => console.error('Error fetching flags:', error));
         }
 
         function updateNearbyPlayers(players) {
@@ -1036,6 +1473,50 @@
             });
         }
 
+        function renderFlagsList() {
+            const cont = document.getElementById('flagsList');
+            if (!cont) return;
+            cont.innerHTML = '';
+            const flags = Array.isArray(gameState.flags) ? gameState.flags.slice() : [];
+            // Sort by distance
+            flags.sort((a, b) => {
+                const da = calculateDistance(gameState.character.lat, gameState.character.lon, a.lat, a.lon);
+                const db = calculateDistance(gameState.character.lat, gameState.character.lon, b.lat, b.lon);
+                return da - db;
+            });
+            if (!flags.length) {
+                cont.innerHTML = '<p style="color:#95a5a6; text-align:center;">No flags nearby</p>';
+                return;
+            }
+            flags.forEach(f => {
+                const dist = Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, f.lat, f.lon));
+                const el = document.createElement('div');
+                el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
+                el.innerHTML = `
+                    <div style="display:flex; flex-direction:column;">
+                      <div style="font-weight:600; color:#ecf0f1;">${(f.name || 'Flag')}</div>
+                      <div style="font-size: 0.8rem; color:#95a5a6;">${dist}m · ${f.status} · ${f.is_private ? 'Private' : 'Public'}</div>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                      <button class="btn" style="background:#e74c3c;color:white;" ${f.is_mine || f.status==='destroyed' ? 'disabled' : ''} onclick="attackFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Attack</button>
+                      <button class="btn" style="background:#f1c40f;color:black;" ${(!f.is_mine && f.status==='capturable') ? '' : 'disabled'} onclick="captureFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Capture</button>
+                      <button class="btn" style="background:#2ecc71;color:white;" ${(f.is_mine ? '' : 'disabled')} onclick="collectFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Collect</button>
+                      <button class="btn" style="background:#2563eb;color:white;" ${((f.is_mine || !f.is_private) ? '' : 'disabled')} onclick="jumpToFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Jump</button>
+                    </div>
+                `;
+                cont.appendChild(el);
+            });
+        }
+
+        function npcSlug(name) {
+            try {
+                return String(name || '')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/(^-|-$)/g, '');
+            } catch (_) { return 'npc'; }
+        }
+
         function updateMonsters(monsters) {
             gameState.monsters = monsters;
             
@@ -1065,14 +1546,28 @@
                         </div>
                         <div class="npc-actions">
                             ${isInRange ? 
-                                `<button class="fight-btn" onclick="startPvECombat('${monster.id}')">⚔️ Fight</button>` : 
+                                `<button class="fight-btn" onclick="startAutoCombat('${monster.id}')">⚔️ Fight</button>` : 
                                 `<button class="fight-btn disabled" disabled>Too Far Away</button>`
                             }
                         </div>
                     </div>
                 `;
                 
-                const marker = new mapboxgl.Marker({ color: color, scale: 0.9 })
+                // Build a custom marker element using themed icon when available
+                const slug = npcSlug(monster.name);
+                const img = document.createElement('img');
+                img.src = `/static/img/npc/markers/${slug}.svg`;
+                img.width = 28; img.height = 28;
+                img.style.filter = 'drop-shadow(0 0 2px rgba(0,0,0,0.6))';
+                img.alt = slug;
+
+                // Fallback element (colored circle) if icon missing
+                const fallback = document.createElement('div');
+                fallback.style.cssText = `width: 16px; height: 16px; border-radius: 50%; background: ${color}; box-shadow: 0 0 4px rgba(0,0,0,0.6);`;
+                let markerEl = img;
+                img.onerror = () => { markerEl = fallback; };
+
+                const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' })
                     .setLngLat([monster.lon, monster.lat])
                     .setPopup(new mapboxgl.Popup({ 
                         closeOnClick: true,
@@ -1091,6 +1586,255 @@
             return '#dc143c';                       // Red for very hard (level 9+)
         }
 
+        // Territory polygon helpers
+        const CELL_DEG = {{ game_settings.FLAG_CELL_DEGREES|default:0.002 }};
+
+        function circlePolygon(lon, lat, radiusMeters, steps = 60) {
+            const R = 6378137;
+            const d = radiusMeters / R;
+            const phi1 = lat * Math.PI / 180;
+            const lam1 = lon * Math.PI / 180;
+            const coords = [];
+            for (let i = 0; i <= steps; i++) {
+                const brng = 2 * Math.PI * i / steps;
+                const phi2 = Math.asin(Math.sin(phi1) * Math.cos(d) + Math.cos(phi1) * Math.sin(d) * Math.cos(brng));
+                const lam2 = lam1 + Math.atan2(Math.sin(brng) * Math.sin(d) * Math.cos(phi1), Math.cos(d) - Math.sin(phi1) * Math.sin(phi2));
+                coords.push([lam2 * 180 / Math.PI, phi2 * 180 / Math.PI]);
+            }
+            return { type: 'Polygon', coordinates: [coords] };
+        }
+        // Web Mercator helpers (meters)
+        const ORIGIN_SHIFT = 20037508.34;
+        function project(lon, lat) {
+            const x = lon * ORIGIN_SHIFT / 180;
+            let y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+            y = y * ORIGIN_SHIFT / 180;
+            return [x, y];
+        }
+        function unproject(x, y) {
+            const lon = (x / ORIGIN_SHIFT) * 180;
+            let lat = (y / ORIGIN_SHIFT) * 180;
+            lat = 180/Math.PI * (2 * Math.atan(Math.exp(lat * Math.PI / 180)) - Math.PI/2);
+            return [lon, lat];
+        }
+
+        // ==============================
+        // Hex axial utilities (flat-top)
+        // ==============================
+        function hexConstants() {
+            const r = 650; // keep in sync with drawHexGrid()
+            const w = 2 * r;
+            const h = Math.sqrt(3) * r;
+            const xStep = 1.5 * r;
+            const yStep = h;
+            return { r, w, h, xStep, yStep };
+        }
+        function latticeOriginMeters() {
+            // Anchor to player's current position for stable IDs matching the grid
+            const [pX, pY] = project(gameState.character.lon, gameState.character.lat);
+            const { xStep, yStep } = hexConstants();
+            const originX = Math.floor(pX / xStep) * xStep;
+            const originY = Math.floor(pY / yStep) * yStep;
+            return { originX, originY };
+        }
+        // Convert local meters (relative to lattice origin) to axial (q,r) for flat-top
+        function axialFromXYFlat(x, y, s) {
+            const qf = (2/3) * x / s;
+            const rf = (-1/3) * x / s + (Math.sqrt(3)/3) * y / s;
+            return { qf, rf };
+        }
+        function cubeRound(x, y, z) {
+            let rx = Math.round(x);
+            let ry = Math.round(y);
+            let rz = Math.round(z);
+            const x_diff = Math.abs(rx - x);
+            const y_diff = Math.abs(ry - y);
+            const z_diff = Math.abs(rz - z);
+            if (x_diff > y_diff && x_diff > z_diff) {
+                rx = -ry - rz;
+            } else if (y_diff > z_diff) {
+                ry = -rx - rz;
+            } else {
+                rz = -rx - ry;
+            }
+            return { rx, ry, rz };
+        }
+        function axialRound(qf, rf) {
+            const xf = qf;
+            const zf = rf;
+            const yf = -xf - zf;
+            const { rx, ry, rz } = cubeRound(xf, yf, zf);
+            return { q: rx, r: rz };
+        }
+        function xyFromAxialFlat(q, r, s) {
+            const x = s * (1.5 * q);
+            const y = s * (Math.sqrt(3) * (r + q/2));
+            return { x, y };
+        }
+        // Axial helpers for ranges/distances
+        function axialNeighbors(q, r) {
+            // flat-top axial neighbor directions
+            return [
+                { q: +1, r: 0 }, { q: +1, r: -1 }, { q: 0, r: -1 },
+                { q: -1, r: 0 }, { q: -1, r: +1 }, { q: 0, r: +1 }
+            ].map(d => ({ q: q + d.q, r: r + d.r }));
+        }
+        function axialDistance(q1, r1, q2, r2) {
+            // cube distance with y = -x - z
+            const x1 = q1, z1 = r1, y1 = -x1 - z1;
+            const x2 = q2, z2 = r2, y2 = -x2 - z2;
+            return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2));
+        }
+        function axialRange(q, r, radius) {
+            const cells = [];
+            for (let dq = -radius; dq <= radius; dq++) {
+                for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
+                    const q2 = q + dq;
+                    const r2 = r + dr;
+                    cells.push({ q: q2, r: r2 });
+                }
+            }
+            return cells;
+        }
+        // Public helpers
+        function getHexIdForLonLat(lon, lat) {
+            const { r } = hexConstants();
+            const [xAbs, yAbs] = project(lon, lat);
+            const { qf, rf } = axialFromXYFlat(xAbs, yAbs, r);
+            const { q, r: rr } = axialRound(qf, rf);
+            return { q, r: rr };
+        }
+        function getCurrentPlayerHexId() {
+            return getHexIdForLonLat(gameState.character.lon, gameState.character.lat);
+        }
+        function getHexCenterLonLat(q, rAxial) {
+            const { r } = hexConstants();
+            const { x, y } = xyFromAxialFlat(q, rAxial, r);
+            return unproject(x, y);
+        }
+
+        function flagRadiusForLevel(level) {
+            // Derive from hex overlay size to avoid drift
+            return hexConstants().r;
+        }
+        // Fixed number of lattice rings claimed by every flag (0 = just one hex per placement)
+        const CLAIM_RADIUS_CELLS = 0;
+        function claimCellRadiusForLevel(level) {
+            // Fixed radius, ignores level. Change CLAIM_RADIUS_CELLS to adjust globally.
+            return CLAIM_RADIUS_CELLS;
+        }
+        // Territory hex visual radius (meters) for map rendering
+        const TERRITORY_HEX_RADIUS_M = hexConstants().r;
+        // Keep cellSquarePolygon available for potential debugging overlays
+        function cellSquarePolygon(lat, lon, cellDeg = CELL_DEG) {
+            const half = cellDeg / 2;
+            const minLat = lat - half;
+            const maxLat = lat + half;
+            const minLon = lon - half;
+            const maxLon = lon + half;
+            return {
+                type: 'Polygon',
+                coordinates: [[
+                    [minLon, minLat],
+                    [maxLon, minLat],
+                    [maxLon, maxLat],
+                    [minLon, maxLat],
+                    [minLon, minLat]
+                ]]
+            };
+        }
+        function mercatorHexFromLonLat(lon, lat, radiusMeters) {
+            // Build flat-top hex using the SAME Mercator meter math as the grid so edges align perfectly
+            const [cx, cy] = project(lon, lat);
+            const coords = [];
+            for (let i = 0; i < 6; i++) {
+                const angle = Math.PI / 3 * i + Math.PI / 6; // flat-top orientation
+                const px = cx + radiusMeters * Math.cos(angle);
+                const py = cy + radiusMeters * Math.sin(angle);
+                coords.push(unproject(px, py));
+            }
+            coords.push(coords[0]);
+            return { type: 'Polygon', coordinates: [coords] };
+        }
+
+function buildHexGeo(flags) {
+            // One hex per placement (no union). Increase size so adjacent tiles overlap noticeably.
+            const tR = hexConstants().r * 1.25; // strong overlap (~25%)
+            const features = [];
+            (flags || []).forEach(f => {
+                // Snap to nearest lattice cell for placement center (already snapped on place, but safe)
+                const { q, r: rr } = getHexIdForLonLat(f.lon, f.lat);
+                const [lonC, latC] = getHexCenterLonLat(q, rr);
+                const poly = mercatorHexFromLonLat(lonC, latC, tR);
+                const color = (typeof f.color === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(f.color)) ? f.color : null;
+                features.push({
+                    type: 'Feature',
+                    geometry: poly,
+                    properties: { owner_id: f.owner_id, status: f.status || 'active', cell_q: q, cell_r: rr, flag_id: f.id, color: color }
+                });
+            });
+            return { type: 'FeatureCollection', features };
+        }
+
+        // Dissolve adjacent hexes by owner/status so regions become single puzzle-like shapes
+        function dissolveHexesByOwner(hexFC) {
+            try {
+                const groups = new Map();
+                for (const f of (hexFC?.features || [])) {
+                    const owner = (f.properties && f.properties.owner_id != null) ? String(f.properties.owner_id) : 'none';
+                    const status = (f.properties && f.properties.status) ? String(f.properties.status) : 'active';
+                    const key = owner + '__' + status;
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push(f);
+                }
+                const out = [];
+                for (const [key, feats] of groups.entries()) {
+                    const [owner_id, status] = key.split('__');
+                    let dissolvedFeature = null;
+                    if (typeof turf !== 'undefined' && feats.length) {
+                        // Prefer turf.dissolve when available
+                        if (typeof turf.dissolve === 'function') {
+                            const fc = { type: 'FeatureCollection', features: feats };
+                            const res = turf.dissolve(fc);
+                            if (res) {
+                                if (res.type === 'FeatureCollection') {
+                                    (res.features || []).forEach(g => { g.properties = { owner_id, status }; out.push(g); });
+                                    continue;
+                                } else if (res.type === 'Feature') {
+                                    res.properties = { owner_id, status };
+                                    out.push(res);
+                                    continue;
+                                }
+                            }
+                        }
+                        // Fallback: pairwise union
+                        try {
+                            dissolvedFeature = feats.reduce((acc, f) => acc ? turf.union(acc, f) : f, null);
+                        } catch (e) {
+                            // If union fails for complex geometries, just push originals as a last resort
+                            dissolvedFeature = null;
+                        }
+                    }
+if (dissolvedFeature) {
+                        // Try to propagate a representative color for the group (prefer first with color)
+                        let groupColor = null;
+                        try {
+                            for (const f0 of feats) { const c0 = (f0.properties && f0.properties.color); if (typeof c0 === 'string' && c0) { groupColor = c0; break; } }
+                        } catch(_) { groupColor = null; }
+                        dissolvedFeature.properties = { owner_id, status, color: groupColor };
+                        out.push(dissolvedFeature);
+                    } else {
+                        // Fallback: push originals (still colored/stacked by owner)
+                        feats.forEach(g => { g.properties = { owner_id, status, color: (g.properties && g.properties.color) || null }; out.push(g); });
+                    }
+                }
+                return { type: 'FeatureCollection', features: out };
+            } catch (e) {
+                // Absolute fallback: return input unchanged
+                return hexFC || { type: 'FeatureCollection', features: [] };
+            }
+        }
+
         function loadInventory() {
             fetch('/api/rpg/inventory/')
                 .then(response => response.json())
@@ -1102,48 +1846,168 @@
                 .catch(error => console.error('Error loading inventory:', error));
         }
 
+        function getBerriesCount() {
+            try {
+                const inv = Array.isArray(gameState.inventoryItems) ? gameState.inventoryItems : [];
+                const entry = inv.find(e => (e && e.item && String(e.item.name || '').toLowerCase() === 'berries'));
+                const qty = entry ? (typeof entry.quantity === 'number' ? entry.quantity : 0) : 0;
+                return qty;
+            } catch (_) { return 0; }
+        }
+
+        function updateHealButtonState() {
+            const btn = document.getElementById('heal-berries-btn');
+            if (!btn) return;
+            const full = (Number(gameState.character.current_hp) >= Number(gameState.character.max_hp));
+            const qty = getBerriesCount();
+            const shouldDisable = full || qty <= 0;
+            btn.disabled = !!shouldDisable;
+            btn.title = shouldDisable ? (full ? 'HP is full' : 'No berries') : 'Use a berry to heal 25% HP';
+            // Optional: reflect qty in label
+            try {
+                const base = '🍓 Heal with berries';
+                btn.textContent = qty > 0 ? `${base} (x${qty})` : base;
+            } catch (_) {}
+        }
+
+        async function healWithBerries() {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const btn = document.getElementById('heal-berries-btn');
+                if (btn) btn.disabled = true;
+
+                async function postBerries(url) {
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                        credentials: 'same-origin'
+                    });
+                    let data = null;
+                    try { data = await res.json(); } catch (_) {}
+                    return { res, data, url };
+                }
+
+                // Try modern path first, then legacy fallback
+                let attempt = await postBerries('/api/inventory/berries/');
+                if (attempt.res.status === 404) {
+                    attempt = await postBerries('/legacy/api/inventory/berries/');
+                }
+                const { res, data } = attempt;
+
+                if (!res.ok || !data || data.success === false) {
+                    showMessage((data && data.error) || 'Failed to use berries', 'error');
+                    return;
+                }
+                const stats = data.character_stats || {};
+                if (typeof stats.current_hp === 'number' && typeof stats.max_hp === 'number') {
+                    gameState.character.current_hp = stats.current_hp;
+                    gameState.character.max_hp = stats.max_hp;
+                }
+                if (typeof stats.current_mana === 'number') gameState.character.current_mana = stats.current_mana;
+                if (typeof stats.max_mana === 'number') gameState.character.max_mana = stats.max_mana;
+                if (typeof stats.current_stamina === 'number') gameState.character.current_stamina = stats.current_stamina;
+                if (typeof stats.max_stamina === 'number') gameState.character.max_stamina = stats.max_stamina;
+                updateCharacterStats(gameState.character);
+                showMessage(data.message || 'Healed with berries!', 'success');
+                try { loadInventory(); } catch (_) {}
+                updateHealButtonState();
+            } catch (e) {
+                console.error('healWithBerries error', e);
+                showMessage('Failed to use berries', 'error');
+            } finally {
+                // Re-enable if still applicable
+                try { updateHealButtonState(); } catch(_) {}
+            }
+        }
+
+        function getItemIcon(item) {
+            const name = (item?.item?.name || '').toLowerCase();
+            const type = (item?.item?.item_type || '').toLowerCase();
+            // Simple emoji mapping; can be swapped for images later
+            if (/berry|berries/.test(name)) return '🍓';
+            if (type === 'weapon' || /sword|dagger|axe|bow/.test(name)) return '🗡️';
+            if (type === 'armor' || /armor|mail|vest|helmet|shield/.test(name)) return '🛡️';
+            if (type === 'consumable' || /potion|food|meat|bread/.test(name)) return '🧪';
+            if (/ore|artifact|gold|iron|stone|rock/.test(name)) return '🪨';
+            return '🎒';
+        }
+
         function updateInventoryUI(inventory) {
             const inventoryGrid = document.getElementById('inventoryGrid');
+            if (!inventoryGrid) return;
             inventoryGrid.innerHTML = '';
             
-            // Create 20 inventory slots
-            for (let i = 0; i < 20; i++) {
+            const items = Array.isArray(inventory) ? inventory.slice() : [];
+            // Save for UI logic (e.g., heal button state)
+            gameState.inventoryItems = items;
+            const TOTAL_SLOTS = 20;
+            for (let i = 0; i < TOTAL_SLOTS; i++) {
                 const slot = document.createElement('div');
                 slot.className = 'inventory-slot';
                 
-                const item = inventory.find(inv => inv.slot === i);
-                if (item) {
+                // Take the i-th item (no server-provided slot index yet)
+                const entry = items[i];
+                if (entry && entry.item) {
+                    const icon = getItemIcon(entry);
+                    const qty = typeof entry.quantity === 'number' ? entry.quantity : 1;
+                    const nm = entry.item.name || 'Item';
+                    const desc = entry.item.description || '';
                     slot.innerHTML = `
-                        <div class="item-icon"></div>
-                        <div class="item-quantity">${item.quantity}</div>
+                        <div class="item-icon" style="display:flex;align-items:center;justify-content:center;font-size:20px;background:none;">${icon}</div>
+                        <div class="item-quantity">${qty}</div>
                     `;
-                    slot.title = `${item.item.name}\n${item.item.description}`;
-                    
-                    if (item.is_equipped) {
-                        slot.classList.add('equipped');
-                    }
+                    slot.title = `${nm}\n${desc}`;
+                    if (entry.is_equipped) slot.classList.add('equipped');
                 }
                 
                 inventoryGrid.appendChild(slot);
             }
+            // Update heal button state after inventory render
+            try { updateHealButtonState(); } catch (_) {}
         }
 
         // WebSocket Connection
         function initializeWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/rpg/game/`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/game/`;
             
             gameState.websocket = new WebSocket(wsUrl);
             
             gameState.websocket.onopen = function() {
                 console.log('WebSocket connected');
                 showMessage('Connected to game server!', 'success');
+                // Request a fresh inventory snapshot after connect
+                try { loadInventory(); } catch(_) {}
             };
             
             gameState.websocket.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 handleWebSocketMessage(data);
             };
+            
+            // Also listen for inventory/character updates on the simple map UI
+            try {
+                if (window.GameSocket && typeof window.GameSocket.on === 'function') {
+                    window.GameSocket.on('inventory_update', () => { try { loadInventory(); } catch(_) {} });
+                    window.GameSocket.on('character_updated', (payload) => {
+                        try {
+                            const ch = (payload && payload.data) ? {
+                                level: payload.data.level,
+                                experience: payload.data.experience,
+                                experience_to_next: payload.data.experience_to_next,
+                                current_hp: payload.data.health,
+                                max_hp: payload.data.max_health,
+                                current_mana: payload.data.mana,
+                                max_mana: payload.data.max_mana,
+                                current_stamina: payload.data.stamina,
+                                max_stamina: payload.data.max_stamina,
+                                gold: payload.data.gold
+                            } : null;
+                            if (ch) updateCharacterStats(Object.assign({}, gameState.character, ch));
+                        } catch(_) {}
+                    });
+                }
+            } catch(_) {}
             
             gameState.websocket.onclose = function() {
                 console.log('WebSocket disconnected');
@@ -1163,20 +2027,68 @@
                     updateNearbyPlayers(data.players);
                     break;
                 case 'combat_start':
-                    startCombatUI(data.combat);
+                    try {
+                        const c = data.combat || data.data;
+                        if (c) {
+                            gameState.activeCombat = c;
+                            createHpTicker(c);
+                            startAutoLoopForActiveCombat();
+                            showMessage('Combat started!', 'error');
+                        }
+                    } catch (_) {}
                     break;
                 case 'combat_update':
-                    updateCombatUI(data.combat);
+                    try {
+                        const c = data.combat || data.data;
+                        if (c) {
+                            gameState.activeCombat = c;
+                            updateHpTicker(c);
+                        }
+                    } catch(_) {}
                     break;
                 case 'combat_end':
-                    endCombatUI(data.result);
+                    try { stopAutoCombat(); } catch(_) {}
+                    showMessage('Combat ended.', 'info');
                     break;
                 case 'level_up':
                     showMessage(`Level up! You are now level ${data.level}!`, 'success');
                     updateCharacterStats(data.character);
                     break;
+                case 'inventory_update':
+                case 'inventory_updated':
+                    // Backend signaled inventory changed (e.g., loot drop, harvest, use)
+                    try { loadInventory(); } catch (_) {}
+                    break;
+                case 'character_update':
+                case 'character_updated':
+                    // Normalize and apply character snapshot for HUD/XP bar updates
+                    try {
+                        const p = (data && (data.data || data.character)) || {};
+                        const ch = {};
+                        if (typeof p.level === 'number') ch.level = p.level;
+                        if (typeof p.experience === 'number') ch.experience = p.experience;
+                        if (typeof p.experience_to_next === 'number') ch.experience_to_next = p.experience_to_next;
+                        if (typeof p.health === 'number') ch.current_hp = p.health;
+                        if (typeof p.max_health === 'number') ch.max_hp = p.max_health;
+                        if (typeof p.mana === 'number') ch.current_mana = p.mana;
+                        if (typeof p.max_mana === 'number') ch.max_mana = p.max_mana;
+                        if (typeof p.stamina === 'number') ch.current_stamina = p.stamina;
+                        if (typeof p.max_stamina === 'number') ch.max_stamina = p.max_stamina;
+                        if (typeof p.gold === 'number') ch.gold = p.gold;
+                        updateCharacterStats(Object.assign({}, gameState.character, ch));
+                        if (gameState.activeCombat) { try { updateHpTicker(gameState.activeCombat); } catch(_){} }
+                    } catch (_) {}
+                    break;
+                case 'character':
+                    // Real-time character snapshot from server (already normalized)
+                    updateCharacterStats((data && data.data) ? data.data : (data.character || {}));
+                    break;
                 case 'trade_request':
                     handleTradeRequest(data.trade);
+                    break;
+                case 'flag_event':
+                    // Re-fetch flags on any flag event to stay in sync
+                    try { fetchNearbyFlags(); } catch (e) { console.warn('flag_event refresh failed', e); }
                     break;
             }
         }
@@ -1206,55 +2118,280 @@
             });
         }
 
-        function combatAction(action) {
+        async function combatAction(action) {
             if (!gameState.activeCombat) return;
-            
-            fetch('/api/rpg/combat/action/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-                },
-                body: JSON.stringify({ 
-                    combat_id: gameState.activeCombat.id, 
-                    action: action 
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
+            try {
+                const res = await fetch('/api/rpg/combat/action/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                    },
+                    body: JSON.stringify({
+                        combat_id: gameState.activeCombat.id,
+                        action: action
+                    })
+                });
+                const data = await res.json();
                 if (data.success) {
-                    if (data.combat_ended) {
+            if (data.success) {
                         hideCombatModal();
+                        try { if (data.message) addCombatLog(data.message); } catch(_) {}
                         showMessage(data.message, data.victory ? 'success' : 'error');
+                        if (data.victory) {
+                            try { showVictoryPopup(data); } catch(e) { console.warn('Victory popup error', e); }
+                        }
                         gameState.activeCombat = null;
-                        
                         // Update character stats
                         updateCharacterStats(data.character);
-                        
-                        // Refresh game data
+                        // If defeat, immediately respawn at user's real location
+                        if (data.defeat) { try { handleRespawnFlow(); } catch(e) { console.warn('respawn flow failed', e); } }
+                        // Refresh game data (also updates inventory)
                         loadGameData();
+                        try { stopAutoCombat(); } catch(_) {}
                     } else {
-                        updateCombatUI(data.combat);
+                        try { if (data.message) addCombatLog(data.message); } catch(_) {}
+                        // Update UI if modal is open, and always update ticker if present
+                        try { updateCombatUI(data.combat); } catch(_) {}
+                        try { updateHpTicker(data.combat); } catch(_) {}
+                        gameState.activeCombat = data.combat;
                     }
                 } else {
                     showMessage(data.error, 'error');
                 }
-            })
-            .catch(error => {
+            } catch (error) {
                 console.error('Error performing combat action:', error);
                 showMessage('Combat action failed', 'error');
-            });
+            }
         }
 
         function showCombatModal(combat) {
-            const modal = document.getElementById('combatModal');
-            modal.style.display = 'flex';
-            updateCombatUI(combat);
+            // PK-style: do not use modal; use ticker only
+            try { createHpTicker(combat); } catch(_) {}
         }
 
         function hideCombatModal() {
             const modal = document.getElementById('combatModal');
-            modal.style.display = 'none';
+            try { modal.style.display = 'none'; } catch(_) {}
+        }
+
+        // Respawn flow: ask browser geolocation, call server, and refresh UI
+        async function handleRespawnFlow() {
+            function getGeo() {
+                return new Promise((resolve) => {
+                    if (!navigator.geolocation) return resolve(null);
+                    try {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+                            () => resolve(null),
+                            { enableHighAccuracy: true, timeout: 4000 }
+                        );
+                    } catch(_) { resolve(null); }
+                });
+            }
+            const geo = await getGeo();
+            const payload = geo ? { lat: geo.lat, lon: geo.lon } : {};
+            try {
+                const res = await fetch('/api/rpg/character/respawn/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || !data.success) {
+                    showMessage(data.error || 'Respawn failed', 'error');
+                    return;
+                }
+                // Update state and map
+                if (data.location) {
+                    gameState.character.lat = data.location.lat;
+                    gameState.character.lon = data.location.lon;
+                    if (playerMarker) playerMarker.setLngLat([gameState.character.lon, gameState.character.lat]);
+                    try { gameState.map.setCenter([gameState.character.lon, gameState.character.lat]); } catch(_) {}
+                }
+                if (data.character) updateCharacterStats(data.character);
+                showMessage('Respawned at your current location with full health.', 'success');
+                try { loadGameData(); } catch(_) {}
+            } catch (e) {
+                console.warn('Respawn error', e);
+                showMessage('Failed to respawn', 'error');
+            }
+        }
+
+        // Auto-combat ticker (shows HP bars at top; no modal)
+        function createHpTicker(combat) {
+            try { removeHpTicker(); } catch(_) {}
+            const el = document.createElement('div');
+            el.id = 'hp-ticker';
+            el.style.cssText = 'position:fixed;top:70px;left:50%;transform:translateX(-50%);background:rgba(17,24,39,0.9);border:1px solid rgba(255,255,255,0.12);padding:8px 12px;border-radius:10px;color:#e5e7eb;z-index:1700;min-width:260px;box-shadow:0 8px 20px rgba(0,0,0,0.4);';
+            el.innerHTML = `
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-weight:700;">
+                    <span id="hpTickPlayerName">${(gameState.character.name || 'You').toString().replace(/</g,'&lt;')}</span>
+                    <span id="hpTickEnemyName">${(combat.enemy && combat.enemy.name ? combat.enemy.name : 'Enemy').toString().replace(/</g,'&lt;')}</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">
+                    <div style="flex:1;height:8px;background:#374151;border-radius:6px;overflow:hidden;">
+                        <div id="hpTickPlayerBar" style="height:100%;background:#ef4444;width:0%"></div>
+                    </div>
+                    <div id="hpTickPlayerText" style="font-size:12px;min-width:60px;text-align:right;">0/0</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <div style="flex:1;height:8px;background:#374151;border-radius:6px;overflow:hidden;">
+                        <div id="hpTickEnemyBar" style="height:100%;background:#f59e0b;width:0%"></div>
+                    </div>
+                    <div id="hpTickEnemyText" style="font-size:12px;min-width:60px;text-align:right;">0/0</div>
+                </div>`;
+            document.body.appendChild(el);
+            gameState.hpTickerEl = el;
+            updateHpTicker(combat);
+        }
+        function updateHpTicker(combat) {
+            const el = gameState.hpTickerEl; if (!el || !combat) return;
+            const pMax = Number(gameState.character.max_hp) || 1;
+            const pHp = Math.max(0, Math.min(pMax, Number((combat.player_hp != null ? combat.player_hp : gameState.character.current_hp))));
+            const eMax = Number((combat.enemy && combat.enemy.max_hp) || combat.enemy_max_hp || 1);
+            const eHp = Math.max(0, Math.min(eMax, Number((combat.enemy_hp != null ? combat.enemy_hp : eMax))));
+            const pPct = Math.max(0, Math.min(100, (pHp / pMax) * 100));
+            const ePct = Math.max(0, Math.min(100, (eHp / eMax) * 100));
+            const pb = el.querySelector('#hpTickPlayerBar');
+            const pt = el.querySelector('#hpTickPlayerText');
+            const eb = el.querySelector('#hpTickEnemyBar');
+            const et = el.querySelector('#hpTickEnemyText');
+            if (pb) pb.style.width = pPct + '%';
+            if (pt) pt.textContent = `${Math.round(pHp)}/${Math.round(pMax)}`;
+            if (eb) eb.style.width = ePct + '%';
+            if (et) et.textContent = `${Math.round(eHp)}/${Math.round(eMax)}`;
+        }
+        function removeHpTicker() {
+            const el = gameState.hpTickerEl;
+            if (el && el.parentNode) { try { el.parentNode.removeChild(el); } catch(_) {} }
+            gameState.hpTickerEl = null;
+        }
+        function startAutoLoopForActiveCombat() {
+            if (gameState.autoCombatTimer) { try { clearInterval(gameState.autoCombatTimer); } catch(_) {} gameState.autoCombatTimer = null; }
+            gameState.autoCombatBusy = false;
+            gameState.autoCombatTimer = setInterval(async () => {
+                if (!gameState.activeCombat) { stopAutoCombat(); return; }
+                if (gameState.autoCombatBusy) return;
+                gameState.autoCombatBusy = true;
+                try { await combatAction('attack'); } catch(_) {}
+                gameState.autoCombatBusy = false;
+            }, 800);
+        }
+
+        async function startAutoCombat(monsterId) {
+            try {
+                const res = await fetch('/api/rpg/combat/pve/start/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                    },
+                    body: JSON.stringify({ monster_id: monsterId })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    showMessage(data.error || 'Failed to start combat', 'error');
+                    return;
+                }
+                gameState.activeCombat = data.combat;
+                createHpTicker(data.combat);
+                try { addCombatLog(`Engaged ${data.combat?.enemy?.name || 'enemy'}`); } catch(_) {}
+                if (gameState.autoCombatTimer) { clearInterval(gameState.autoCombatTimer); gameState.autoCombatTimer = null; }
+                gameState.autoCombatBusy = false;
+                gameState.autoCombatTimer = setInterval(async () => {
+                    if (!gameState.activeCombat) { stopAutoCombat(); return; }
+                    if (gameState.autoCombatBusy) return;
+                    gameState.autoCombatBusy = true;
+                    try { await combatAction('attack'); } catch(_) {}
+                    gameState.autoCombatBusy = false;
+                }, 800);
+            } catch (e) {
+                console.error('Error starting auto combat:', e);
+                showMessage('Failed to start combat', 'error');
+            }
+        }
+        function stopAutoCombat() {
+            if (gameState.autoCombatTimer) { try { clearInterval(gameState.autoCombatTimer); } catch(_) {} gameState.autoCombatTimer = null; }
+            gameState.autoCombatBusy = false;
+            removeHpTicker();
+        }
+
+        // Victory popup
+        function animateItemDrops(result) {
+            const drops = Array.isArray(result.drops) ? result.drops : [];
+            if (!drops.length) return;
+            // Drop at bottom center of map viewport
+            const mapEl = document.getElementById('map');
+            const rect = mapEl.getBoundingClientRect();
+            const baseX = rect.left + rect.width/2;
+            const baseY = rect.top + rect.height/2;
+            const spread = 40;
+            drops.slice(0, 5).forEach((d, i) => {
+                const el = document.createElement('div');
+                el.className = 'item-drop';
+                const icon = getIconForItem(d.name);
+                el.innerHTML = `<img src="${icon}" alt="${d.name}"><div>${(d.name || '').toString().replace(/</g,'&lt;')}</div><div class="item-quantity">x${d.quantity || 1}</div>`;
+                el.style.left = (baseX + (i - 2) * spread) + 'px';
+                el.style.top = (baseY - 20) + 'px';
+                el.style.position = 'fixed';
+                document.body.appendChild(el);
+                setTimeout(() => { try { el.remove(); } catch(_){} }, 1200);
+            });
+        }
+        function getIconForItem(name) {
+            const n = String(name || '').toLowerCase();
+            if (/gold/.test(n)) return '/static/img/gold_icon.png';
+            if (/silver/.test(n)) return '/static/img/silver_icon.png';
+            if (/wood/.test(n)) return '/static/img/wood_icon.png';
+            if (/iron/.test(n)) return '/static/img/iron_icon.png';
+            if (/stone|rock/.test(n)) return '/static/img/stone_icon.png';
+            if (/berries?/.test(n)) return '/static/img/berries_icon.png';
+            if (/food|meat|bread/.test(n)) return '/static/img/food_icon.png';
+            return '/static/img/loot_icon.png';
+        }
+        function showVictoryPopup(result) {
+            try { animateItemDrops(result); } catch(e) {}
+            // Build or reuse modal element
+            let modal = document.getElementById('victoryModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'victoryModal';
+                modal.className = 'victory-modal';
+                document.body.appendChild(modal);
+            }
+            const drops = Array.isArray(result.drops) ? result.drops : [];
+            const gainedGold = typeof result.gold_gained === 'number' ? result.gold_gained : null;
+            const gainedXP = typeof result.experience_gained === 'number' ? result.experience_gained : null;
+            const dropsHTML = drops.length ? (
+                '<div class="drops-list">' + drops.map(d => (
+                    `<div class="drop-item"><span>${(d.name || '').toString().replace(/</g,'&lt;')}</span><span>x${d.quantity || 1}</span></div>`
+                )).join('') + '</div>'
+            ) : '<div class="victory-sub">No items dropped.</div>';
+            const territoryRadiusMeters = Math.round(flagRadiusForLevel(1));
+            modal.innerHTML = `
+                <div class="victory-card">
+                    <div class="victory-title">Victory!</div>
+                    <div class="victory-sub">${(result.message || 'You defeated the monster.').toString().replace(/\</g,'\u0026lt;')}</div>
+                    ${gainedXP !== null || gainedGold !== null ? `<div class="drops-list"><div class="drop-item"><span>Experience</span><span>+${gainedXP ?? 0}</span></div><div class="drop-item"><span>Gold</span><span>+${gainedGold ?? 0}</span></div></div>` : ''}
+                    ${dropsHTML}
+                    <div class="victory-actions">
+                        <button class="btn btn-inventory" id="victoryInventoryBtn">Open Inventory</button>
+                        <button class="btn btn-close-victory" id="victoryCloseBtn">Close</button>
+                    </div>
+                </div>`;
+            modal.style.display = 'flex';
+            const close = () => { modal.style.display = 'none'; };
+            modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+            document.getElementById('victoryCloseBtn').onclick = close;
+            // Auto-dismiss after 5 seconds
+            setTimeout(close, 5000);
+            document.getElementById('victoryInventoryBtn').onclick = () => {
+                // Switch to inventory tab and refresh
+                try { showTab('inventory'); } catch(_) {}
+                try { loadInventory(); } catch(_) {}
+                close();
+            };
         }
 
         function updateCombatUI(combat) {
@@ -1333,6 +2470,21 @@
             }, 5000);
         }
 
+        // Combat log helpers
+        function renderCombatLog() {
+            const cont = document.getElementById('combatLogList');
+            if (!cont) return;
+            const items = gameState.combatLog || [];
+            cont.innerHTML = items.slice(-50).map(msg => `<div style="padding:4px 0;border-bottom:1px dashed rgba(255,255,255,0.08);">${(msg || '').toString().replace(/</g,'&lt;')}</div>`).join('');
+        }
+        function addCombatLog(msg) {
+            try {
+                if (!gameState.combatLog) gameState.combatLog = [];
+                if (msg) gameState.combatLog.push(String(msg));
+                renderCombatLog();
+            } catch (_) {}
+        }
+
         function updateCharacterStats(character) {
             // Update character object
             Object.assign(gameState.character, character);
@@ -1342,13 +2494,26 @@
             const manaBar = document.querySelector('.mana-bar');
             const staminaBar = document.querySelector('.stamina-bar');
             
-            hpBar.style.width = (character.current_hp / character.max_hp * 100) + '%';
-            manaBar.style.width = (character.current_mana / character.max_mana * 100) + '%';
-            staminaBar.style.width = (character.current_stamina / character.max_stamina * 100) + '%';
+            if (hpBar && character.max_hp) hpBar.style.width = (character.current_hp / character.max_hp * 100) + '%';
+            if (manaBar && character.max_mana) manaBar.style.width = (character.current_mana / character.max_mana * 100) + '%';
+            if (staminaBar && character.max_stamina) staminaBar.style.width = (character.current_stamina / character.max_stamina * 100) + '%';
+            
+            // Update XP bar if provided
+            if (typeof character.experience === 'number' && typeof character.experience_to_next === 'number') {
+                const xpBar = document.getElementById('xpBar');
+                const xpText = document.getElementById('xpText');
+                const toNext = Math.max(1, character.experience_to_next);
+                const pct = Math.max(0, Math.min(100, (character.experience / toNext) * 100));
+                if (xpBar) xpBar.style.width = pct + '%';
+                if (xpText) xpText.textContent = `${character.experience}/${character.experience_to_next}`;
+            }
             
             // Update text displays
-            document.querySelector('.level-display').textContent = `Level ${character.level}`;
-            document.querySelector('.gold-display').textContent = `${character.gold}g`;
+            const lvlEl = document.querySelector('.level-display');
+            const goldEl = document.querySelector('.gold-display');
+            if (lvlEl) lvlEl.textContent = `Level ${character.level}`;
+            if (goldEl) goldEl.textContent = `${character.gold}g`;
+            try { updateHealButtonState(); } catch (_) {}
         }
 
         function startGameLoop() {
@@ -1377,12 +2542,7 @@
         function initializeTapToMove() {
             // Add click event listener to the map
             gameState.map.on('click', function(e) {
-                // Don't move if in combat
-                if (gameState.activeCombat) {
-                    showMessage('Cannot move during combat!', 'error');
-                    return;
-                }
-                
+                // Allow movement during combat. If in combat, NPC will follow until leash limit.
                 // Don't move if already moving
                 if (isMoving) {
                     showMessage('Already moving...', 'info');
@@ -1412,62 +2572,85 @@
             return R * c; // Distance in meters
         }
         
-        function moveCharacterTo(targetLat, targetLon) {
-            // Set movement flag
+        async function moveCharacterTo(targetLat, targetLon) {
+            if (isMoving) return;
             isMoving = true;
-            
-            // Calculate distance for animation duration
-            const distance = calculateDistance(
-                gameState.character.lat, 
-                gameState.character.lon, 
-                targetLat, 
-                targetLon
-            );
-            
-            // Calculate animation duration based on distance (min 1s, max 5s)
-            const baseDuration = Math.min(Math.max(distance * 10, 1000), 5000);
-            
-            // Show movement indicator
-            showMessage(`Moving ${Math.round(distance)}m...`, 'info');
-            
-            // Store original position for smooth interpolation
             const startLat = gameState.character.lat;
             const startLon = gameState.character.lon;
-            
-            // Animate the marker position smoothly
-            animateMarkerMovement(startLat, startLon, targetLat, targetLon, baseDuration);
-            
-            // Center map on new location with smooth transition
-            gameState.map.easeTo({
-                center: [targetLon, targetLat],
-                zoom: {{ game_settings.ZOOM_LEVEL }},
-                duration: baseDuration
-            });
-            
-            // Update character position in game state after animation completes
-            setTimeout(() => {
-                gameState.character.lat = targetLat;
-                gameState.character.lon = targetLon;
-                
-                // Send movement update to server via WebSocket
-                if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
-                    gameState.websocket.send(JSON.stringify({
-                        type: 'player_movement',
-                        lat: targetLat,
-                        lon: targetLon
-                    }));
+            const distance = calculateDistance(startLat, startLon, targetLat, targetLon);
+            console.log(`Move requested: ${Math.round(distance)}m`);
+            const baseDuration = Math.min(Math.max(distance * 10, 1000), 5000);
+
+            // Ask server first to validate and perform move (enforces territory rules)
+            try {
+                const res = await fetch('/api/rpg/character/move/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                    },
+                    body: JSON.stringify({ lat: targetLat, lon: targetLon })
+                });
+                const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
+                if (!res.ok || !data.success) {
+                    // Server denied the move; keep player at current location
+                    showMessage(data.error || 'Move denied by server', 'error');
+                    isMoving = false;
+                    return;
                 }
-                
-                // Update character position on server via API
-                updateCharacterPosition(targetLat, targetLon);
-                
-                // Reset movement flag
+
+                // Server accepted and already updated position; animate client to match
+                showMessage(`Moving ${Math.round(distance)}m...`, 'info');
+                animateMarkerMovement(startLat, startLon, data.lat ?? targetLat, data.lon ?? targetLon, baseDuration);
+                const currentZoom = Math.max(16, Math.min(17.5, (gameState.map && typeof gameState.map.getZoom === 'function') ? gameState.map.getZoom() : 17.5));
+                gameState.map.easeTo({ center: [data.lon ?? targetLon, data.lat ?? targetLat], zoom: currentZoom, duration: baseDuration });
+
+                // Inform WebSocket to update geo tile subscription (server will move us to the correct tile group)
+                try {
+                    if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
+                        gameState.websocket.send(JSON.stringify({
+                            type: 'player_movement',
+                            lat: data.lat ?? targetLat,
+                            lon: data.lon ?? targetLon
+                        }));
+                    }
+                } catch (e) { console.warn('WS move notify failed', e); }
+
+                setTimeout(() => {
+                    gameState.character.lat = data.lat ?? targetLat;
+                    gameState.character.lon = data.lon ?? targetLon;
+                    if (playerMarker) playerMarker.setLngLat([gameState.character.lon, gameState.character.lat]);
+
+                    // Notify via websocket (optional)
+                    if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
+                        gameState.websocket.send(JSON.stringify({ type: 'player_movement', lat: gameState.character.lat, lon: gameState.character.lon }));
+                    }
+
+                    isMoving = false;
+                    // Auto-open combat if started
+                    if (data.combat_started && data.combat) {
+                        gameState.activeCombat = data.combat;
+                        createHpTicker(gameState.activeCombat);
+                        startAutoLoopForActiveCombat();
+                        showMessage('An aggressive monster attacks!', 'error');
+                    } else {
+                        // If combat ended due to leash escape, clear active combat and ticker
+                        if (gameState.activeCombat && data.combat_ended && data.fled) {
+                            try { stopAutoCombat(); } catch(_) {}
+                            gameState.activeCombat = null;
+                            showMessage('You escaped the enemy.', 'success');
+                        } else {
+                            showMessage('Arrived!', 'success');
+                        }
+                    }
+                    loadGameData();
+                    checkTerritoryPresence();
+                }, baseDuration);
+            } catch (e) {
+                console.error('Move error:', e);
+                showMessage('Failed to move (network error)', 'error');
                 isMoving = false;
-                showMessage('Arrived!', 'success');
-                
-                // Refresh nearby data after movement
-                loadGameData();
-            }, baseDuration);
+            }
         }
         
         function animateMarkerMovement(startLat, startLon, targetLat, targetLon, duration) {
@@ -1505,30 +2688,51 @@
             return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         }
         
+        function isInsideFlag(flag, lat, lon) {
+            // Presence by hex cell: inside if your current hex matches the flag's hex
+            const myCell = getHexIdForLonLat(lon, lat);
+            const flagCell = getHexIdForLonLat(flag.lon, flag.lat);
+            return myCell.q === flagCell.q && myCell.r === flagCell.r;
+        }
+
+        let lastTerritoryOwner = null; // track territory transitions
+
+        function checkTerritoryPresence() {
+            const me = { lat: gameState.character.lat, lon: gameState.character.lon };
+            const here = (gameState.flags || []).find(f => isInsideFlag(f, me.lat, me.lon));
+            const owner = here ? here.owner_id : null;
+            if (owner !== lastTerritoryOwner) {
+                lastTerritoryOwner = owner;
+                if (here) {
+                    if (owner === CURRENT_USER_ID) {
+                        showMessage('You entered your territory', 'success');
+                    } else {
+                        showMessage('Enemy territory — PvP rules apply!', 'error');
+                    }
+                } else {
+                    showMessage('You left all territories', 'info');
+                }
+            }
+        }
+
         function updateCharacterPosition(lat, lon) {
-            // Update character position on server
-            fetch('/api/rpg/character/move/', {
+            // Deprecated by moveCharacterTo() server-first validation flow.
+            // Kept for compatibility if called elsewhere; now behaves as a no-op wrapper.
+            return fetch('/api/rpg/character/move/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
                 },
-                body: JSON.stringify({
-                    lat: lat,
-                    lon: lon
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log('Position updated on server');
-                } else {
-                    console.error('Failed to update position:', data.error);
-                    showMessage('Failed to update position on server', 'error');
+                body: JSON.stringify({ lat, lon })
+            }).then(r => r.json()).then(data => {
+                if (!data.success) {
+                    showMessage(data.error || 'Failed to update position on server', 'error');
                 }
-            })
-            .catch(error => {
-                console.error('Error updating position:', error);
+                return data;
+            }).catch(err => {
+                console.error('Error updating position:', err);
+                showMessage('Error updating position', 'error');
             });
         }
         
@@ -1544,9 +2748,23 @@
         }
 
         // Initialize everything when page loads
-        window.addEventListener('load', function() {
+window.addEventListener('load', function() {
             initializeMap();
+            try { updateHealButtonState(); } catch (_) {}
+            try { renderCombatLog(); } catch(_) {}
             checkMobile();
+            // Resume combat if active
+            fetch('/api/rpg/combat/state/')
+              .then(r => r.json())
+              .then(s => {
+                if (s && s.success && s.active && s.combat) {
+                  gameState.activeCombat = s.combat;
+                  createHpTicker(s.combat);
+                  startAutoLoopForActiveCombat();
+                  showMessage('Resumed active combat.', 'info');
+                }
+              })
+              .catch(() => {});
         });
 
         window.addEventListener('resize', checkMobile);
@@ -1687,8 +2905,9 @@
         // ============================================
         
         // Simple test to check right-click detection
-        alert('Flag system test: JavaScript is working!');
         console.log('🚩 Flag system starting...');
+        // Global territory radius constant for the placement dialog
+        var territoryRadiusMeters = Math.round(flagRadiusForLevel(1));
         
         document.addEventListener('DOMContentLoaded', function() {
             console.log('🚩 DOM ready, setting up flag system');
@@ -1716,10 +2935,10 @@
         });
         
         function showFlagPlacementDialog(x, y) {
-            // Get coordinates from map click
-            const mapCenter = gameState.map.getCenter();
-            const lat = mapCenter.lat;
-            const lng = mapCenter.lng;
+            // Convert screen coordinates to map coordinates
+            const pt = gameState.map.unproject([x, y]);
+            const lat = pt.lat;
+            const lng = pt.lng;
             
             // Create modal dialog
             const modal = document.createElement('div');
@@ -1750,7 +2969,7 @@
                     <div style="margin-bottom: 20px; padding: 10px; background: #4a5568; border-radius: 4px; font-size: 14px;">
                         <strong>Cost:</strong> 500 gold, 20 wood, 10 stone<br>
                         <strong>Location:</strong> ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
-                        <strong>Territory Radius:</strong> 200 meters<br>
+                        <strong>Territory Radius:</strong> ${territoryRadiusMeters} meters<br>
                         <em>Your flag will use your chosen account color</em>
                     </div>
                     
@@ -1774,8 +2993,11 @@
             
             modal.querySelector('#flag-place').addEventListener('click', () => {
                 const name = modal.querySelector('#flag-name').value.trim() || 'My Flag';
+                // Snap the desired placement to nearest lattice cell center before sending to server
+                const { q, r } = getHexIdForLonLat(lng, lat);
+                const [snappedLon, snappedLat] = getHexCenterLonLat(q, r);
                 document.body.removeChild(modal);
-                placeFlag(lat, lng, name);
+                placeFlag(snappedLat, snappedLon, name);
             });
             
             // Close on background click
@@ -1786,35 +3008,79 @@
             });
         }
         
+        function snapToGrid(lat, lon, cellDeg = CELL_DEG) {
+            // Snap to nearest grid cell center
+            const latIdx = Math.round(lat / cellDeg);
+            const lonIdx = Math.round(lon / cellDeg);
+            return { lat: latIdx * cellDeg, lon: lonIdx * cellDeg };
+        }
+
+        function sameGridCell(a, b, cellDeg = CELL_DEG) {
+            const A = snapToGrid(a.lat, a.lon, cellDeg);
+            const B = snapToGrid(b.lat, b.lon, cellDeg);
+            return A.lat === B.lat && A.lon === B.lon;
+        }
+
         async function placeFlag(lat, lng, name) {
             try {
-                console.log(`🚩 Placing flag "${name}" at ${lat}, ${lng}`);
-                
+                console.log(`🚩 Placing flag \"${name}\" at ${lat}, ${lng}`);
+
+                // Let the server handle PK-style placement and overlap checks.
+                // We still send the clicked coords to provide direction.
+
                 const response = await fetch('/api/flags/place/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
                     },
-                    credentials: 'include',
+                    credentials: 'same-origin',
                     body: JSON.stringify({
                         lat: lat,
                         lon: lng,
-                        custom_name: name
+                        name: name,
+                        flag_type: 'territory'
                     })
                 });
-                
+                if (!response.ok) {
+                    // Try to parse error JSON, else show text
+                    let msg = 'Failed to place flag.';
+                    try { const err = await response.json(); msg = err.error || msg; } catch(e) { try { msg = await response.text(); } catch(_) {} }
+                    console.error('❌ Flag create failed:', msg);
+                    showMessage(msg, 'error');
+                    return;
+                }
                 const data = await response.json();
-                
-                if (data.success) {
-                    console.log('🚩 Flag placed successfully:', data);
-                    showMessage(data.message, 'success');
-                    
-                    // Add flag marker to map
-                    addFlagToMap(data.flag);
+                if (!data.success) {
+                    console.error('❌ Flag create failed:', data.error);
+                    showMessage(data.error || 'Failed to place flag.', 'error');
+                    return;
+                }
+                const f = data.data;
+                const flag = {
+                    id: f.id,
+                    name: f.name || name,
+                    lat: f.lat,
+                    lon: f.lon,
+                    level: f.level || 1,
+                    owner_id: f.owner_id,
+                    is_mine: f.owner_id === CURRENT_USER_ID,
+                    status: f.status || 'active',
+                    uncollected_balance: f.uncollected_balance || 0,
+                    is_private: !!f.is_private
+                };
+                console.log('🚩 Flag placed successfully:', flag);
+                showMessage(`Flag \"${flag.name}\" placed!`, 'success');
+                gameState.flags.push(flag);
+                addFlagToMap(flag);
+
+                // Update hex overlay in real-time
+                const hexData = buildHexGeo(gameState.flags);
+                if (gameState.map.getSource('hex_source')) {
+                    gameState.map.getSource('hex_source').setData(hexData);
                 } else {
-                    console.error('❌ Failed to place flag:', data.error);
-                    showMessage(data.error, 'error');
+                    // If hex source/layers not initialized yet, fall back to a full refresh
+                    try { fetchNearbyFlags(); } catch(_) {}
                 }
             } catch (error) {
                 console.error('❌ Error placing flag:', error);
@@ -1823,144 +3089,286 @@
         }
         
         function addFlagToMap(flag) {
-            // Use flag color from API response or default to red
-            const flagColor = flag.flag_color?.hex_color || '#ff4444';
+// Use owner's chosen color when provided, otherwise default to team/status color
+            const chosenColor = (typeof flag.color === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(flag.color)) ? flag.color : null;
+            const flagColor = chosenColor || (flag.is_mine ? '#2ecc71' : (flag.status === 'capturable' ? '#f1c40f' : '#ff4444'));
             
-            // Create flag marker element
+            // Create flag marker element using animated GIF
             const flagElement = document.createElement('div');
             flagElement.style.cssText = `
-                width: 30px;
-                height: 30px;
-                background: ${flagColor};
-                border: 3px solid ${flag.is_mine ? '#fff' : '#000'};
-                border-radius: 50% 50% 50% 0;
-                transform: rotate(-45deg);
+                width: 40px;
+                height: 40px;
                 cursor: pointer;
                 position: relative;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
             `;
+            const img = document.createElement('img');
+            img.src = FLAG_GIF_URL;
+            img.alt = 'Flag';
+            img.style.cssText = `
+                width: 40px;
+                height: 40px;
+                object-fit: contain;
+                pointer-events: none;
+                image-rendering: -webkit-optimize-contrast;
+            `;
+            // Fallback if image fails to load
+            img.onerror = () => {
+                try { img.remove(); } catch(e) {}
+                const fallback = document.createElement('div');
+                fallback.title = 'Flag';
+                fallback.style.cssText = `
+                    width: 22px; height: 22px; border-left: 3px solid #475569; position: relative;
+                `;
+                const flagCloth = document.createElement('div');
+                flagCloth.style.cssText = `
+                    position:absolute; left:3px; top:1px; width:16px; height:10px; background:${flagColor};
+                    clip-path: polygon(0 0, 100% 20%, 100% 80%, 0 100%);
+                    border:1px solid rgba(0,0,0,0.25);
+                `;
+                fallback.appendChild(flagCloth);
+                flagElement.appendChild(fallback);
+            };
+            flagElement.appendChild(img);
             
-            // Add level indicator
+            // Optional: small level badge
             const levelIndicator = document.createElement('div');
             levelIndicator.textContent = flag.level || '1';
             levelIndicator.style.cssText = `
                 position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%) rotate(45deg);
-                color: white;
-                font-weight: bold;
-                font-size: 12px;
-                text-shadow: 1px 1px 1px rgba(0,0,0,0.8);
+                bottom: -2px;
+                right: -2px;
+                background: ${flagColor};
+                color: #fff;
+                font-weight: 700;
+                font-size: 11px;
+                line-height: 1;
+                padding: 2px 4px;
+                border-radius: 8px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.5);
             `;
             flagElement.appendChild(levelIndicator);
-            
+
+            // Build popup DOM with actions
+            const popupEl = document.createElement('div');
+            popupEl.style.maxWidth = '280px';
+            const isMine = !!flag.is_mine;
+            const status = flag.status || 'active';
+            const distance = Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, flag.lat, flag.lon));
+            const canAttack = !isMine && status !== 'destroyed';
+            const canCapture = !isMine && status === 'capturable';
+            const canCollect = isMine && (flag.uncollected_balance || 0) > 0;
+            const canJump = isMine || !flag.is_private; // allow public flags
+            const canRun = isMine && status === 'active';
+            popupEl.innerHTML = `
+                <div style="font-family: 'Segoe UI', sans-serif;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <strong style="font-size:1rem;color:#2c3e50;">${flag.name || 'Flag'}</strong>
+                        <span style="font-size:0.8rem;background:${flagColor};color:white;padding:2px 8px;border-radius:12px;">L${flag.level || 1}</span>
+                    </div>
+                    <div style="font-size:0.85rem;color:#555;margin-bottom:6px;">
+                        Owner: ${isMine ? 'You' : (flag.owner_name || ('#' + (flag.owner_id || '??')))}<br/>
+                        Status: ${status.replace('_',' ')}<br/>
+                        Dist: ${distance}m
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button id="flag-attack-${flag.id}" ${canAttack ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:${canAttack ? 'pointer' : 'not-allowed'};">Attack</button>
+                        <button id="flag-capture-${flag.id}" ${canCapture ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#f1c40f;color:black;border:none;border-radius:6px;cursor:${canCapture ? 'pointer' : 'not-allowed'};">Capture</button>
+                        <button id="flag-collect-${flag.id}" ${canCollect ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:${canCollect ? 'pointer' : 'not-allowed'};">Collect</button>
+                        <button id="flag-jump-${flag.id}" ${canJump ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:${canJump ? 'pointer' : 'not-allowed'};">Jump</button>
+                        ${isMine ? `<button id="flag-privacy-${flag.id}" style="flex:1 1 100%;padding:6px 10px;background:#374151;color:white;border:none;border-radius:6px;">${flag.is_private ? 'Make Public' : 'Make Private'}</button>` : ''}
+                    </div>
+                </div>
+            `;
+            // Attach handlers
+            setTimeout(() => {
+                const atkBtn = popupEl.querySelector(`#flag-attack-${flag.id}`);
+                const capBtn = popupEl.querySelector(`#flag-capture-${flag.id}`);
+                const colBtn = popupEl.querySelector(`#flag-collect-${flag.id}`);
+                const jmpBtn = popupEl.querySelector(`#flag-jump-${flag.id}`);
+                const privBtn = popupEl.querySelector(`#flag-privacy-${flag.id}`);
+                if (atkBtn) atkBtn.addEventListener('click', () => attackFlag(flag));
+                if (capBtn) capBtn.addEventListener('click', () => captureFlag(flag));
+                if (colBtn) colBtn.addEventListener('click', () => collectFlag(flag));
+                if (jmpBtn) jmpBtn.addEventListener('click', () => jumpToFlag(flag));
+                if (privBtn) privBtn.addEventListener('click', async () => {
+                    try {
+                        const res = await fetch(`/api/flags/${flag.id}/update/`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ is_private: !flag.is_private })
+                        });
+                        const data = await res.json();
+                        if (!res.ok || data.ok === false) throw new Error(data.error || 'Update failed');
+                        showMessage(`Flag is now ${data.flag?.is_private ? 'Private' : 'Public'}`, 'success');
+                        try { fetchNearbyFlags(); } catch (_) {}
+                    } catch (e) {
+                        showMessage(e.message || 'Failed to update privacy', 'error');
+                    }
+                });
+            }, 0);
+
             // Create Mapbox marker
-            const marker = new mapboxgl.Marker(flagElement)
+            const marker = new mapboxgl.Marker({ element: flagElement, anchor: 'center' })
                 .setLngLat([flag.lon, flag.lat])
+                .setPopup(new mapboxgl.Popup({ closeOnClick: true, closeButton: true }).setDOMContent(popupEl))
                 .addTo(gameState.map);
             
-            // Add PK-style territory radius circle
-            addFlagTerritoryRadius(flag, flagColor);
+            // Save marker so we don't duplicate on refresh
+            if (!gameState.flagMarkers) gameState.flagMarkers = {};
+            gameState.flagMarkers[flag.id] = marker;
+            
+            // Shared territory polygons are rendered via territories_source; no per-flag circle.
+            return marker;
         }
+
         
-        function addFlagTerritoryRadius(flag, flagColor) {
-            console.log('🚩 Adding territory radius for flag:', flag, 'color:', flagColor);
-            
-            const radiusMeters = flag.radius_meters || 200;
-            console.log('🚩 Radius in meters:', radiusMeters);
-            
-            // Convert radius from meters to degrees (approximate)
-            const radiusDegrees = radiusMeters / 111320; // 1 degree ≈ 111.32km
-            console.log('🚩 Radius in degrees:', radiusDegrees);
-            
-            // Create circle geometry with multiple points for smooth circle
-            const center = [flag.lon, flag.lat];
-            console.log('🚩 Flag center:', center);
-            
-            const points = [];
-            const numPoints = 64; // More points for smoother circle
-            
-            for (let i = 0; i < numPoints; i++) {
-                const angle = (i / numPoints) * 2 * Math.PI;
-                const x = center[0] + radiusDegrees * Math.cos(angle);
-                const y = center[1] + radiusDegrees * Math.sin(angle);
-                points.push([x, y]);
-            }
-            points.push(points[0]); // Close the circle
-            
-            console.log('🚩 Created', points.length, 'points for circle');
-            
-            const sourceId = `flag-territory-${flag.id || Date.now()}`;
-            console.log('🚩 Source ID:', sourceId);
-            
-            // Create GeoJSON source for the territory circle
-            const territorySource = {
-                'type': 'geojson',
-                'data': {
-                    'type': 'Feature',
-                    'geometry': {
-                        'type': 'Polygon',
-                        'coordinates': [points]
-                    },
-                    'properties': {
-                        'flag_id': flag.id,
-                        'owner': flag.owner || 'Unknown',
-                        'color': flagColor
-                    }
-                }
-            };
-            
-            console.log('🚩 Territory source:', territorySource);
-            
-            // Check if map is loaded
-            if (!gameState.map) {
-                console.error('🚩 Map not loaded yet!');
-                return;
-            }
-            
-            // Only add if source doesn't exist
-            if (!gameState.map.getSource(sourceId)) {
-                console.log('🚩 Adding source and layers to map...');
-                
-                try {
-                    gameState.map.addSource(sourceId, territorySource);
-                    console.log('🚩 Source added successfully');
-                    
-                    // Add fill layer (like PK territorial control)
-                    gameState.map.addLayer({
-                        'id': `${sourceId}-fill`,
-                        'type': 'fill',
-                        'source': sourceId,
-                        'paint': {
-                            'fill-color': flagColor,
-                            'fill-opacity': 0.15  // Semi-transparent like PK
-                        }
-                    });
-                    console.log('🚩 Fill layer added successfully');
-                    
-                    // Add border line (more visible border like PK)
-                    gameState.map.addLayer({
-                        'id': `${sourceId}-line`,
-                        'type': 'line',
-                        'source': sourceId,
-                        'paint': {
-                            'line-color': flagColor,
-                            'line-width': 2,
-                            'line-opacity': 0.6
-                        }
-                    });
-                    console.log('🚩 Line layer added successfully');
-                    
-                } catch (error) {
-                    console.error('🚩 Error adding territory layers:', error);
-                }
-            } else {
-                console.log('🚩 Source already exists, skipping');
+        // Flag actions
+        async function attackFlag(flag) {
+            try {
+                const body = { lat: gameState.character.lat, lon: gameState.character.lon };
+                const res = await fetch(`/api/flags/${flag.id}/attack/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || 'Attack failed');
+                showMessage('Attacked flag!', 'success');
+                fetchNearbyFlags();
+            } catch (e) {
+                showMessage(e.message || 'Attack failed', 'error');
             }
         }
-        
+        async function captureFlag(flag) {
+            try {
+                const body = { lat: gameState.character.lat, lon: gameState.character.lon };
+                const res = await fetch(`/api/flags/${flag.id}/capture/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || 'Capture failed');
+                showMessage('Captured flag!', 'success');
+                fetchNearbyFlags();
+            } catch (e) {
+                showMessage(e.message || 'Capture failed', 'error');
+            }
+        }
+        async function collectFlag(flag) {
+            try {
+                const res = await fetch(`/api/flags/${flag.id}/collect/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' },
+                    credentials: 'same-origin'
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || 'Collect failed');
+                showMessage(`Collected ${data.result?.collected || 0} gold`, 'success');
+                fetchNearbyFlags();
+            } catch (e) {
+                showMessage(e.message || 'Collect failed', 'error');
+            }
+        }
+
+        async function jumpToFlag(flag) {
+            try {
+                const res = await fetch('/api/rpg/character/jump/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ flag_id: flag.id })
+                });
+                const data = await res.json();
+                if (!res.ok || data.success === false) throw new Error(data.error || 'Jump failed');
+                // Update state and map
+                gameState.character.lat = data.location.lat;
+                gameState.character.lon = data.location.lon;
+                if (playerMarker) playerMarker.setLngLat([data.location.lon, data.location.lat]);
+                gameState.map.setCenter([data.location.lon, data.location.lat]);
+                loadGameData();
+                showMessage(`Jumped to ${flag.is_private ? 'private (owner)' : 'public'} flag.`, 'success');
+            } catch (e) {
+                showMessage(e.message || 'Jump failed', 'error');
+            }
+        }
+
+        function highlightRunCircle(flag) {
+            try {
+                const id = 'run-active-outline';
+                const geom = circlePolygon(flag.lon, flag.lat, flagRadiusForLevel(1), 90);
+                const srcData = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: geom, properties: {} }] };
+                if (!gameState.map.getSource('run_active_source')) {
+                    gameState.map.addSource('run_active_source', { type: 'geojson', data: srcData });
+                } else {
+                    gameState.map.getSource('run_active_source').setData(srcData);
+                }
+                if (!gameState.map.getLayer(id)) {
+                    gameState.map.addLayer({ id, type: 'line', source: 'run_active_source', paint: { 'line-color': '#22c55e', 'line-width': 2.5, 'line-opacity': 0.9 } });
+                }
+                // Put above grid but below flag markers
+                try { if (gameState.map.getLayer('territories_border')) gameState.map.moveLayer(id, 'territories_border'); } catch(e){}
+            } catch(e) {}
+        }
+
+        // Client-side guard: placing flag only if inside own territory
+        function isInsideOwnTerritory(lat, lon) {
+            return (gameState.flags || []).some(f => f.owner_id === CURRENT_USER_ID && isInsideFlag(f, lat, lon));
+        }
+
+        // UI helpers to place flags without right-click
+        function showFlagPlacementDialogForLngLat(lng, lat) {
+            try {
+                if (!gameState.map) return;
+                const pt = gameState.map.project({ lng: lng, lat: lat });
+                showFlagPlacementDialog(pt.x, pt.y);
+            } catch (e) { showMessage('Map not ready', 'error'); }
+        }
+        function uiPlaceFlagAtCenter() {
+            try {
+                const c = gameState.map.getCenter();
+                showFlagPlacementDialogForLngLat(c.lng, c.lat);
+            } catch (e) { showMessage('Map not ready', 'error'); }
+        }
+        function uiPlaceFlagAtPlayer() {
+            try {
+                showFlagPlacementDialogForLngLat(gameState.character.lon, gameState.character.lat);
+            } catch (e) { showMessage('Map not ready', 'error'); }
+        }
+
         console.log('🚩 Flag system loaded');
+
+        // Client-side clear of flags and territory layers (non-destructive)
+        function resetMapClient() {
+            try {
+                // Remove flag markers
+                if (gameState.flagMarkers) {
+                    Object.values(gameState.flagMarkers).forEach(m => { try { m.remove(); } catch(e) {} });
+                }
+                gameState.flagMarkers = {};
+                gameState.flags = [];
+
+                // Remove territory layers and sources
+                const layers = ['territories_glow','territories_border','territories_fill','hex_outline','grid-hex-outline','grid-hex'];
+                layers.forEach(id => { try { if (gameState.map.getLayer(id)) gameState.map.removeLayer(id); } catch(e) {} });
+                const sources = ['territories_source','hex_source','grid'];
+                sources.forEach(id => { try { if (gameState.map.getSource(id)) gameState.map.removeSource(id); } catch(e) {} });
+
+                // Redraw hex grid fresh
+                try { drawHexGrid(); } catch(e) {}
+
+                showMessage('Map cleared (client-side). Reload or move to fetch fresh data.', 'success');
+            } catch (e) {
+                console.error('resetMapClient error:', e);
+                showMessage('Failed to clear map (client). See console.', 'error');
+            }
+        }
     </script>
 </body>
 </html>

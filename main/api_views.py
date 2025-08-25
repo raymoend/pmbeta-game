@@ -478,6 +478,79 @@ class GetMapDataView(RPGAPIView):
         return JsonResponse(map_data)
 
 
+class ListTerritoriesView(RPGAPIView):
+    """List all territory flags within a reasonable radius of the player."""
+
+    def get(self, request):
+        from .models import TerritoryFlag
+        try:
+            lat, lon = float(self.character.lat), float(self.character.lon)
+        except Exception:
+            lat, lon = 0.0, 0.0
+        # Simple radius filter (~10km box; DB index friendly). Refine as needed.
+        flags_qs = TerritoryFlag.objects.all()
+        nearby = flags_qs.filter(
+            lat__range=(lat - 0.1, lat + 0.1),
+            lon__range=(lon - 0.1, lon + 0.1),
+        )
+        def as_dict(f):
+            return {
+                'id': str(getattr(f, 'id', '')),
+                'name': getattr(f, 'name', 'Flag'),
+                'position': {'x': float(getattr(f, 'lon', 0.0)), 'y': float(getattr(f, 'lat', 0.0))},
+                'flagType': getattr(f, 'flag_type', 'basic_flag') or 'basic_flag',
+                'accessType': getattr(f, 'access_type', 'public') or 'public',
+                'accessCost': getattr(f, 'access_cost', 0) or 0,
+                'ownerId': getattr(f, 'owner_id', None),
+                'level': getattr(f, 'level', 1) or 1,
+            }
+        return JsonResponse({
+            'success': True,
+            'territories': [as_dict(f) for f in nearby]
+        })
+
+
+class TravelToTerritoryView(RPGAPIView):
+    """Teleport the player to a territory flag center (server-authoritative)."""
+
+    def post(self, request):
+        data = self.get_json_data(request)
+        territory_id = data.get('territory_id')
+        if not territory_id:
+            return JsonResponse({'error': 'territory_id is required'}, status=400)
+        from .models import TerritoryFlag
+        try:
+            flag = TerritoryFlag.objects.get(id=territory_id)
+        except TerritoryFlag.DoesNotExist:
+            return JsonResponse({'error': 'Territory not found'}, status=404)
+        # Access checks could be added here (ownership, public/private, fees)
+        with transaction.atomic():
+            self.character.lat = float(getattr(flag, 'lat', 0.0))
+            self.character.lon = float(getattr(flag, 'lon', 0.0))
+            # Optionally set move center to flag for movement enforcement
+            if hasattr(self.character, 'move_center_lat') and hasattr(self.character, 'move_center_lon'):
+                self.character.move_center_lat = self.character.lat
+                self.character.move_center_lon = self.character.lon
+            self.character.save(update_fields=['lat', 'lon'] + ([
+                'move_center_lat', 'move_center_lon'] if hasattr(self.character, 'move_center_lat') else []))
+        self.send_websocket_update('character_moved', {
+            'character_id': str(self.character.id),
+            'character_name': self.character.name,
+            'new_position': {'lat': self.character.lat, 'lon': self.character.lon},
+            'timestamp': timezone.now().isoformat()
+        })
+        return JsonResponse({
+            'success': True,
+            'new_position': {'lat': self.character.lat, 'lon': self.character.lon},
+            'territory': {
+                'id': str(getattr(flag, 'id', '')),
+                'name': getattr(flag, 'name', 'Flag'),
+                'position': {'x': float(getattr(flag, 'lon', 0.0)), 'y': float(getattr(flag, 'lat', 0.0))},
+                'flagType': getattr(flag, 'flag_type', 'basic_flag') or 'basic_flag',
+            }
+        })
+
+
 class GetInventoryView(RPGAPIView):
     """Get character inventory"""
     
@@ -542,4 +615,6 @@ RPG_API_URLS = [
     ('map/', GetMapDataView.as_view(), 'get_map'),
     ('inventory/', GetInventoryView.as_view(), 'get_inventory'),
     ('skills/', GetSkillsView.as_view(), 'get_skills'),
+    ('territories/', ListTerritoriesView.as_view(), 'list_territories'),
+    ('territory/travel/', TravelToTerritoryView.as_view(), 'travel_territory'),
 ]

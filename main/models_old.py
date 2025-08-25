@@ -93,9 +93,42 @@ class Player(LivingEntity):
         return f"{self.user.username} (Level {self.level})"
     
     def can_move_to(self, lat, lon):
-        """Check if player can move to given coordinates (within range)"""
-        distance = self.distance_between(self.center_lat, self.center_lon, lat, lon)
-        return distance < settings.GAME_SETTINGS['MOVEMENT_RANGE']
+        """Check if player can move to given coordinates (PK-style flag restriction)"""
+        from .flag_models import TerritoryFlag
+        
+        # First check if target is within any flag radius
+        accessible_flags = TerritoryFlag.objects.filter(
+            status='active'
+        )
+        
+        # Check if target position is within any flag radius
+        for flag in accessible_flags:
+            distance_to_flag = self.distance_between(flag.lat, flag.lon, lat, lon)
+            
+            # If within flag radius, movement is allowed
+            if distance_to_flag <= flag.radius_meters:
+                return True
+        
+        # Check if player is currently within a flag and trying to move within movement range
+        # This allows movement within a smaller radius if already in a flag
+        current_flag = None
+        for flag in accessible_flags:
+            current_distance = self.distance_between(flag.lat, flag.lon, self.lat, self.lon)
+            if current_distance <= flag.radius_meters:
+                current_flag = flag
+                break
+        
+        # If currently in a flag, allow short-range movement within that flag
+        if current_flag:
+            distance_to_target = self.distance_between(self.lat, self.lon, lat, lon)
+            # Allow small movements within the flag radius (50 meters max per move)
+            if distance_to_target <= 50:
+                target_distance_from_flag = self.distance_between(current_flag.lat, current_flag.lon, lat, lon)
+                if target_distance_from_flag <= current_flag.radius_meters:
+                    return True
+        
+        # If no flag access and not a small movement, deny
+        return False
     
     def get_chunk_coords(self):
         """Get chunk coordinates for current position (P2K-style 0.01 degree chunks)"""

@@ -30,6 +30,88 @@ class BaseModel(models.Model):
 
 class Character(BaseModel):
     """Main character model with RPG progression"""
+    # Player classes and display labels
+    CLASS_CHOICES = [
+        ('cyber_warrior', 'Cyber Warrior'),
+        ('neural_hacker', 'Neural Hacker'),
+        ('mech_pilot', 'Mech Pilot'),
+        ('bio_synth', 'Bio Synth'),
+        ('quantum_rogue', 'Quantum Rogue'),
+        ('void_sorcerer', 'Void Sorcerer'),
+    ]
+
+    # Class design: balanced base stats (sum=50) and descriptive notes
+    CLASS_INFO = {
+        'cyber_warrior': {
+            'role': 'Tank / Melee Fighter',
+            'description': 'Defensive frontline fighter using cybernetic armor and melee weaponry. Excels in defense and survivability.',
+            'specials': [
+                'Nano Shielding: Boost defense temporarily by spending energy.',
+                'Overdrive Mode: Trade defense for temporary damage + speed boost.',
+                'Magnetic Pull: Pulls enemies closer, hindering ranged attacks briefly.'
+            ],
+            'base_stats': {'vitality': 14, 'strength': 12, 'defense': 14, 'agility': 5, 'intelligence': 5}
+        },
+        'neural_hacker': {
+            'role': 'Support / Utility',
+            'description': 'Stealthy tech manipulator who hacks, disrupts enemies, and provides buffs/debuffs.',
+            'specials': [
+                'Overload: Disables enemy shields and drones in an area.',
+                'EMP Blast: Temporarily disables enemy abilities or tech items.',
+                'Data Steal: Steal resources or data to gain temporary boosts.',
+                'Stealth Cloak: Temporarily invisible to sensors.'
+            ],
+            'base_stats': {'vitality': 9, 'strength': 6, 'defense': 8, 'agility': 11, 'intelligence': 16}
+        },
+        'mech_pilot': {
+            'role': 'Ranged DPS / Tank Hybrid',
+            'description': 'Operates advanced combat mechs or drones with strong ranged offense and solid armor.',
+            'specials': [
+                'Drone Strike: Call an AI drone to assist in combat.',
+                'Overcharged Weaponry: Temporarily boosts ranged damage.',
+                'Hover Mode: Avoid ground-based attacks briefly.',
+                'Tactical Lock-On: Increased accuracy/damage on a target.'
+            ],
+            'base_stats': {'vitality': 11, 'strength': 9, 'defense': 13, 'agility': 7, 'intelligence': 10}
+        },
+        'bio_synth': {
+            'role': 'Healer / Support',
+            'description': 'Biotech specialist who heals, regenerates, and buffs allies using organic/synthetic enhancements.',
+            'specials': [
+                'Regeneration Field: Area heal over time.',
+                'Vital Surge: Big single-target heal at energy cost.',
+                'Biotic Shield: Temporary damage shield on allies.',
+                'Nano Boost: Temporary strength/speed/damage boost to an ally.'
+            ],
+            'base_stats': {'vitality': 11, 'strength': 6, 'defense': 11, 'agility': 11, 'intelligence': 11}
+        },
+        'quantum_rogue': {
+            'role': 'Stealth / DPS',
+            'description': 'High-speed assassin manipulating time/space for stealth attacks and evasions.',
+            'specials': [
+                'Time Warp: Slow/speed time in an area to disorient foes.',
+                'Phase Shift: Temporarily intangible to pass through obstacles.',
+                'Critical Hack: Tech disruption to increase crit chance.',
+                'Silent Strike: Attacks from stealth are stronger and quiet.'
+            ],
+            'base_stats': {'vitality': 7, 'strength': 12, 'defense': 7, 'agility': 16, 'intelligence': 8}
+        },
+        'void_sorcerer': {
+            'role': 'Magic / Energy Manipulation',
+            'description': 'Harnesses void and dark matter to control the battlefield with energy-based attacks.',
+            'specials': [
+                'Void Rift: Pull-in for crowd control.',
+                'Energy Absorption: Convert incoming energy to health or power.',
+                'Gravitational Crush: Damage and armor debuff.',
+                'Black Hole Nova: AoE damage-over-time field.'
+            ],
+            'base_stats': {'vitality': 10, 'strength': 7, 'defense': 7, 'agility': 7, 'intelligence': 19}
+        },
+    }
+
+    # Derived convenience mapping used by apply_class_base_stats
+    CLASS_BASE_STATS = {k: v['base_stats'] for k, v in CLASS_INFO.items()}
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='character')
     
     # Character Info
@@ -38,6 +120,9 @@ class Character(BaseModel):
     # Location (GPS coordinates)
     lat = models.FloatField(help_text="Current latitude")
     lon = models.FloatField(help_text="Current longitude")
+    # Movement center (set on first valid move) for enforcing movement radius
+    move_center_lat = models.FloatField(null=True, blank=True, help_text="Movement center latitude")
+    move_center_lon = models.FloatField(null=True, blank=True, help_text="Movement center longitude")
     
     # Core RPG Stats
     level = models.IntegerField(default=1)
@@ -57,6 +142,9 @@ class Character(BaseModel):
     current_mana = models.IntegerField(default=50)
     max_stamina = models.IntegerField(default=100)
     current_stamina = models.IntegerField(default=100)
+
+    # Unspent points to allocate on level-up
+    unspent_stat_points = models.IntegerField(default=0)
     
     # Currency and Resources
     gold = models.BigIntegerField(default=1000, help_text="Primary currency")
@@ -68,9 +156,10 @@ class Character(BaseModel):
     
     # PvP Settings
     pvp_enabled = models.BooleanField(default=True, help_text="Can be attacked by other players")
-    
-    # Flag customization
-    flag_color = models.ForeignKey('FlagColor', on_delete=models.SET_NULL, null=True, blank=True, help_text="User's chosen flag color")
+
+    # Customization (chosen at registration only)
+    class_type = models.CharField(max_length=32, choices=CLASS_CHOICES, default='cyber_warrior')
+    flag_color = models.ForeignKey('main.FlagColor', on_delete=models.SET_NULL, null=True, blank=True, help_text="User's chosen flag color")
     
     class Meta:
         db_table = 'rpg_characters'
@@ -108,31 +197,51 @@ class Character(BaseModel):
         return self.level * 1000
     
     def level_up(self):
-        """Level up and increase stats"""
+        """Level up and grant allocation points instead of auto-statting."""
         xp_needed = self.experience_needed_for_next_level()
         self.experience -= xp_needed
         self.level += 1
-        
-        # Increase stats on level up
-        self.strength += 2
-        self.defense += 2
-        self.vitality += 3
-        self.agility += 2
-        self.intelligence += 1
-        
-        # Recalculate derived stats
+
+        # Grant unspent stat points (player allocates later via API/UI)
+        self.unspent_stat_points += 5
+
+        # Recalculate derived stats (HP baseline remains constant)
         self.recalculate_derived_stats()
-        
-        # Full heal on level up
+
+        # Full restore on level up for QoL
         self.current_hp = self.max_hp
         self.current_mana = self.max_mana
         self.current_stamina = self.max_stamina
     
     def recalculate_derived_stats(self):
-        """Recalculate HP, mana, stamina based on attributes"""
-        self.max_hp = 50 + (self.vitality * 10) + (self.level * 5)
+        """Recalculate derived stats.
+        HP baseline is fixed at 100 for all classes; mana/stamina scale with INT/AGI and level.
+        """
+        # Fixed HP baseline for fairness across classes
+        self.max_hp = 100
+        # Mana and stamina still scale
         self.max_mana = 25 + (self.intelligence * 5) + (self.level * 2)
         self.max_stamina = 50 + (self.agility * 5) + (self.level * 3)
+        # Clamp currents to new maxima if needed
+        self.current_hp = min(self.current_hp or 0, self.max_hp)
+        self.current_mana = min(self.current_mana or 0, self.max_mana)
+        self.current_stamina = min(self.current_stamina or 0, self.max_stamina)
+
+    def apply_class_base_stats(self):
+        """Set core attributes based on selected class. Should be called on creation."""
+        stats = self.CLASS_BASE_STATS.get(self.class_type)
+        if not stats:
+            return
+        self.vitality = int(stats.get('vitality', self.vitality))
+        self.strength = int(stats.get('strength', self.strength))
+        self.defense = int(stats.get('defense', self.defense))
+        self.agility = int(stats.get('agility', self.agility))
+        self.intelligence = int(stats.get('intelligence', self.intelligence))
+        # Derived stats and full restore; HP is fixed baseline
+        self.recalculate_derived_stats()
+        self.current_hp = self.max_hp
+        self.current_mana = self.max_mana
+        self.current_stamina = self.max_stamina
     
     def heal(self, amount):
         """Heal character"""
@@ -145,6 +254,27 @@ class Character(BaseModel):
                 self.current_mana >= mana_cost and 
                 not self.in_combat)
     
+    def allocate_stats(self, allocations: dict):
+        """Allocate unspent points to attributes.
+        allocations example: {'strength':2,'defense':1,'vitality':1,'agility':0,'intelligence':1}
+        """
+        valid = ['strength', 'defense', 'vitality', 'agility', 'intelligence']
+        to_spend = sum(int(allocations.get(k, 0) or 0) for k in valid)
+        if to_spend <= 0:
+            return False, 'No points allocated'
+        if to_spend > self.unspent_stat_points:
+            return False, f'Not enough points (have {self.unspent_stat_points})'
+        # Apply
+        for k in valid:
+            inc = int(allocations.get(k, 0) or 0)
+            if inc:
+                setattr(self, k, int(getattr(self, k)) + inc)
+        self.unspent_stat_points -= to_spend
+        # Recompute derived from new attributes
+        self.recalculate_derived_stats()
+        self.save()
+        return True, 'Allocated'
+
     def add_item_to_inventory(self, item_name, quantity=1):
         """Add an item to character's inventory"""
         # Get or create the item template
@@ -190,6 +320,15 @@ class Character(BaseModel):
                 'max_stack_size': 20,
                 'heal_amount': 10
             },
+            # Themed consumable replacement for legacy 'berries'
+            'Energy Berries': {
+                'description': 'Energetic berries that restore 25% health',
+                'item_type': 'consumable',
+                'base_value': 12,
+                'max_stack_size': 10,
+                'heal_percentage': 0.25
+            },
+            # Legacy support: keep old key usable for older inventories
             'berries': {
                 'description': 'Sweet berries that restore 25% health',
                 'item_type': 'consumable',
@@ -442,6 +581,8 @@ class MonsterTemplate(BaseModel):
     # Rewards
     base_experience = models.IntegerField(default=25)
     base_gold = models.IntegerField(default=10)
+    # Optional structured drop pool for NPC death (list of {item, quantity})
+    drop_pool = models.JSONField(default=list)
     
     # Behavior
     is_aggressive = models.BooleanField(default=True)
@@ -567,45 +708,42 @@ class PvECombat(BaseModel):
         return True
     
     def generate_loot_drops(self):
-        """Generate loot drops from defeated monster"""
+        """Generate loot drops from defeated monster.
+        If the monster's template defines a drop_pool, honor optional per-entry probability `prob` (0.0-1.0).
+        Otherwise use themed fallback heuristics (mafia–alien style).
+        """
         loot = []
-        monster_name = self.monster.template.name.lower()
-        
-        # Animal-type monsters drop berries more often
-        animal_types = ['wolf', 'bear', 'deer', 'rabbit', 'boar', 'fox']
-        is_animal = any(animal in monster_name for animal in animal_types)
-        
-        if is_animal:
-            # Animals have higher chance to drop berries
-            if random.random() < 0.6:  # 60% chance
-                loot.append({
-                    'name': 'berries',
-                    'quantity': random.randint(1, 3)
-                })
-        
-        # All monsters can drop basic loot
-        if random.random() < 0.3:  # 30% chance for food
-            loot.append({
-                'name': 'food',
-                'quantity': random.randint(1, 2)
-            })
-        
-        # Higher level monsters drop better loot
-        if self.monster.template.level >= 5:
-            if random.random() < 0.2:  # 20% chance for rare materials
-                rare_items = ['iron_ore', 'gold_ore', 'ancient_artifact']
-                loot.append({
-                    'name': random.choice(rare_items),
-                    'quantity': 1
-                })
-        
-        # Boss-type monsters (high level) drop guaranteed berries
-        if self.monster.template.level >= 10:
-            loot.append({
-                'name': 'berries',
-                'quantity': random.randint(2, 4)
-            })
-        
+        try:
+            pool = list(getattr(self.monster.template, 'drop_pool', []) or [])
+        except Exception:
+            pool = []
+        if pool:
+            for entry in pool:
+                try:
+                    item_name = entry.get('item') or entry.get('name')
+                    qty = int(entry.get('quantity', 1))
+                    prob = float(entry.get('prob', 0.5))
+                except Exception:
+                    item_name, qty, prob = None, 0, 0.0
+                if not item_name or qty <= 0:
+                    continue
+                if random.random() < max(0.0, min(1.0, prob)):
+                    loot.append({'name': item_name, 'quantity': qty})
+            return loot
+
+        # Themed fallback drops (mafia–alien). Skewed by level.
+        commons = ['Energy Berries', 'Neon Wood', 'Plasma Stone', 'Mutant Herbs', 'Cyber Hide']
+        rares = ['Quantum Ore', 'Stellar Gems', 'Void Essence']
+        epics = ['Ancient Alien Relic', 'Nano-Fabric']
+        p_common = 0.7
+        p_rare = 0.2 if self.monster.template.level >= 4 else 0.1
+        p_epic = 0.1 if self.monster.template.level >= 8 else 0.02
+        if random.random() < p_common:
+            loot.append({'name': random.choice(commons), 'quantity': random.randint(1, 3)})
+        if random.random() < p_rare:
+            loot.append({'name': random.choice(rares), 'quantity': 1})
+        if random.random() < p_epic:
+            loot.append({'name': random.choice(epics), 'quantity': 1})
         return loot
     
     def end_combat(self, result):
@@ -791,6 +929,115 @@ class TradeItem(BaseModel):
 
 
 # ===============================
+# FLAG/TERRITORY SYSTEM (PK-style minimal core)
+# ===============================
+
+class TerritoryFlag(BaseModel):
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        UNDER_ATTACK = 'under_attack', 'Under Attack'
+        CAPTURABLE = 'capturable', 'Capturable'
+        DESTROYED = 'destroyed', 'Destroyed'
+
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='flags')
+    name = models.CharField(max_length=64, blank=True, default='')
+    lat = models.FloatField(db_index=True)
+    lon = models.FloatField(db_index=True)
+    level = models.PositiveSmallIntegerField(default=1)
+    hp_current = models.PositiveIntegerField(default=100)
+    hp_max = models.PositiveIntegerField(default=100)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+
+    # Privacy: when true, only owner can jump to this flag
+    is_private = models.BooleanField(default=False)
+
+    uncollected_balance = models.BigIntegerField(default=0)
+    income_per_hour = models.IntegerField(default=10)
+    upkeep_per_day = models.IntegerField(default=5)
+
+    last_income_at = models.DateTimeField(auto_now_add=True)
+    last_upkeep_at = models.DateTimeField(auto_now_add=True)
+    capture_window_ends_at = models.DateTimeField(null=True, blank=True)
+    protection_ends_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'rpg_territory_flags'
+        indexes = [
+            models.Index(fields=['lat', 'lon']),
+        ]
+
+    def __str__(self):
+        return f"Flag {self.name or str(self.id)[:8]} L{self.level} ({self.lat:.4f},{self.lon:.4f})"
+
+
+class FlagAttack(BaseModel):
+    flag = models.ForeignKey(TerritoryFlag, on_delete=models.CASCADE, related_name='attacks')
+    attacker = models.ForeignKey(User, on_delete=models.CASCADE)
+    damage = models.IntegerField(default=0)
+    lat = models.FloatField()
+    lon = models.FloatField()
+
+    class Meta:
+        db_table = 'rpg_flag_attacks'
+
+
+class FlagLedger(BaseModel):
+    class EntryType(models.TextChoices):
+        INCOME = 'income', 'Income'
+        UPKEEP = 'upkeep', 'Upkeep'
+        COLLECT = 'collect', 'Collect'
+        ADJUST = 'adjust', 'Adjust'
+
+    flag = models.ForeignKey(TerritoryFlag, on_delete=models.CASCADE, related_name='ledger')
+    entry_type = models.CharField(max_length=16, choices=EntryType.choices)
+    amount = models.BigIntegerField(default=0)
+    notes = models.CharField(max_length=200, blank=True, default='')
+
+    class Meta:
+        db_table = 'rpg_flag_ledger'
+
+
+class FlagRun(BaseModel):
+    """Per-player per-flag run: defeat N NPCs inside the flag radius to clear it.
+    New runs can be started again even after clearing.
+    """
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('cleared', 'Cleared'),
+        ('abandoned', 'Abandoned'),
+    ]
+
+    character = models.ForeignKey(Character, on_delete=models.CASCADE, related_name='flag_runs')
+    flag = models.ForeignKey(TerritoryFlag, on_delete=models.CASCADE, related_name='runs')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='active')
+
+    # Goals and progress
+    target_count = models.PositiveIntegerField(default=5)
+    defeated_count = models.PositiveIntegerField(default=0)
+
+    # Track live monsters spawned for this run so we can update progress on defeat
+    active_monster_ids = models.JSONField(default=list)
+
+    # Timestamps
+    started_at = models.DateTimeField(auto_now_add=True)
+    cleared_at = models.DateTimeField(null=True, blank=True)
+    last_progress_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'rpg_flag_runs'
+        indexes = [
+            models.Index(fields=['character', 'flag', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Run {str(self.id)[:8]} {self.character.name} @ {self.flag.name or str(self.flag.id)[:6]} ({self.status})"
+
+    @property
+    def remaining(self) -> int:
+        return max(0, int(self.target_count) - int(self.defeated_count))
+
+
+# ===============================
 # WORLD SYSTEM
 # ===============================
 
@@ -869,16 +1116,16 @@ class GameEvent(BaseModel):
 class ResourceNode(BaseModel):
     """Resource nodes for harvesting (trees, mines, etc.)"""
     RESOURCE_TYPES = [
-        ('tree', 'Tree'),  # Provides wood and berries
-        ('iron_mine', 'Iron Mine'),  # Provides iron ore
-        ('gold_mine', 'Gold Mine'),  # Provides gold ore
-        ('stone_quarry', 'Stone Quarry'),  # Provides stone
-        ('herb_patch', 'Herb Patch'),  # Provides herbs and berries
-        ('ruins', 'Ancient Ruins'),  # Provides rare items
-        ('cave', 'Cave'),  # Provides various minerals
-        ('well', 'Water Well'),  # Provides water/food
-        ('farm', 'Farm'),  # Provides food
-        ('berry_bush', 'Berry Bush'),  # Provides berries for healing
+        ('tree', 'Neon Tree'),  # Neon wood + Energy Berries
+        ('iron_mine', 'Plasma Mine'),  # Plasma Stone + Quantum Ore
+        ('gold_mine', 'Stellar Crystal Vein'),  # Stellar Gems + Void Essence
+        ('stone_quarry', 'Alloy Quarry'),  # Themed stone equivalent
+        ('herb_patch', 'Mutant Herb Cluster'),  # Mutant Herbs + Energy Berries
+        ('ruins', 'Ancient Alien Ruins'),  # Rare items
+        ('cave', 'Void-Touched Cave'),  # Various minerals/essence
+        ('well', 'Hydration Nexus'),  # Food/water analogue
+        ('farm', 'Biofarm'),  # Food analogue
+        ('berry_bush', 'Energy Berry Bush'),  # Energy Berries for healing
     ]
     
     # Animal habitat mappings
@@ -908,6 +1155,8 @@ class ResourceNode(BaseModel):
     
     # Rewards
     base_experience = models.IntegerField(default=10)
+    # Optional structured drop pool for harvest (list of {item, quantity})
+    drop_pool = models.JSONField(default=list)
     
     # Status
     is_depleted = models.BooleanField(default=False)
@@ -933,57 +1182,60 @@ class ResourceNode(BaseModel):
         return True
     
     def get_harvest_rewards(self, character_level=1):
-        """Calculate harvest rewards based on resource and character level"""
+        """Calculate harvest rewards based on resource and character level.
+        Themed: if drop_pool present, honor entry prob; else themed by resource type.
+        """
         level_multiplier = 1 + (self.level - 1) * 0.3
         character_multiplier = 1 + (character_level - 1) * 0.1
-        
-        # Base experience reward
         experience = int(self.base_experience * level_multiplier * character_multiplier)
-        
-        # Resource-specific rewards
-        rewards = {
-            'experience': experience,
-            'items': []
-        }
-        
-        # Determine what items to give based on resource type
-        if self.resource_type == 'tree':
+        rewards = { 'experience': experience, 'items': [] }
+
+        pool = list(getattr(self, 'drop_pool', []) or [])
+        if pool:
+            items = []
+            for entry in pool:
+                try:
+                    name = entry.get('item') or entry.get('name')
+                    qty = int(entry.get('quantity', 1))
+                    prob = float(entry.get('prob', 0.5))
+                except Exception:
+                    name, qty, prob = None, 0, 0.0
+                if not name or qty <= 0:
+                    continue
+                if random.random() < max(0.0, min(1.0, prob)):
+                    items.append({'name': name, 'quantity': qty})
+            rewards['items'] = items
+            return rewards
+
+        # Themed resource-specific rewards
+        rt = self.resource_type
+        if rt == 'tree':  # Neon Tree
             rewards['items'] = [
-                {'name': 'wood', 'quantity': random.randint(1, 3)},
-                {'name': 'berries', 'quantity': random.randint(0, 2)}  # Sometimes berries
+                {'name': 'Neon Wood', 'quantity': random.randint(1, 3)},
+                {'name': 'Energy Berries', 'quantity': random.randint(0, 2)}
             ]
-        elif self.resource_type == 'stone_quarry':
-            rewards['items'] = [
-                {'name': 'stone', 'quantity': random.randint(2, 4)}
-            ]
-        elif self.resource_type == 'farm' or self.resource_type == 'well':
-            rewards['items'] = [
-                {'name': 'food', 'quantity': random.randint(1, 3)}
-            ]
-        elif self.resource_type == 'berry_bush' or self.resource_type == 'herb_patch':
-            rewards['items'] = [
-                {'name': 'berries', 'quantity': random.randint(2, 5)}
-            ]
-        elif self.resource_type == 'gold_mine':
-            rewards['items'] = [
-                {'name': 'gold_ore', 'quantity': random.randint(1, 2)}
-            ]
-            rewards['gold'] = random.randint(10, 30)  # Direct gold reward
-        elif self.resource_type == 'iron_mine':
-            rewards['items'] = [
-                {'name': 'iron_ore', 'quantity': random.randint(1, 3)}
-            ]
-        elif self.resource_type == 'cave':
-            rewards['items'] = [
-                {'name': 'stone', 'quantity': random.randint(1, 2)},
-                {'name': 'iron_ore', 'quantity': random.randint(0, 1)}
-            ]
-        elif self.resource_type == 'ruins':
-            rewards['items'] = [
-                {'name': 'ancient_artifact', 'quantity': 1}
-            ]
+        elif rt == 'stone_quarry':  # Alloy Quarry
+            rewards['items'] = [ {'name': 'Plasma Stone', 'quantity': random.randint(2, 4)} ]
+        elif rt in ('farm','well'):
+            rewards['items'] = [ {'name': 'food', 'quantity': random.randint(1, 3)} ]
+        elif rt in ('berry_bush','herb_patch'):
+            if rt == 'berry_bush':
+                rewards['items'] = [ {'name': 'Energy Berries', 'quantity': random.randint(2, 5)} ]
+            else:
+                rewards['items'] = [ {'name': 'Mutant Herbs', 'quantity': random.randint(2, 5)} ]
+        elif rt == 'gold_mine':  # Stellar Crystal Vein
+            rewards['items'] = [ {'name': 'Stellar Gems', 'quantity': random.randint(1, 2)}, {'name': 'Void Essence', 'quantity': random.randint(0, 1)} ]
+            rewards['gold'] = random.randint(10, 30)
+        elif rt == 'iron_mine':  # Plasma Mine
+            rewards['items'] = [ {'name': 'Plasma Stone', 'quantity': random.randint(1, 3)}, {'name': 'Quantum Ore', 'quantity': random.randint(0, 2)} ]
+        elif rt == 'cave':  # Void-Touched Cave
+            tmp = [ {'name': 'Plasma Stone', 'quantity': random.randint(1, 2)}, {'name': 'Quantum Ore', 'quantity': random.randint(0, 1)} ]
+            if random.random() < 0.1:
+                tmp.append({'name': 'Void Essence', 'quantity': 1})
+            rewards['items'] = [i for i in tmp if i['quantity'] > 0]
+        elif rt == 'ruins':  # Ancient Alien Ruins
+            rewards['items'] = [ {'name': 'Ancient Alien Relic', 'quantity': 1} ]
             rewards['gold'] = random.randint(50, 100)
-        
         return rewards
     
     def harvest(self, character):
@@ -1196,6 +1448,6 @@ class CraftingAttempt(BaseModel):
         return f"{self.character.name} crafting {self.recipe.name} ({self.status})"
 
 
-# Import building and flag models to register them with Django
+# Import building models to register them with Django
 from .building_models import FlagColor
-from .flag_models import TerritoryFlag, TerritoryZone, FlagRevenueCollection, FlagCombatLog, FlagUpkeepLog
+# Flag system models removed

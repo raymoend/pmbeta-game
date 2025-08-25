@@ -5,14 +5,15 @@
 
 class RPGWebSocketClient {
     constructor(options = {}) {
-        this.wsUrl = options.wsUrl || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/game/`;
-        this.reconnectInterval = options.reconnectInterval || 3000;
-        this.maxReconnectAttempts = options.maxReconnectAttempts || 5;
+        // Accept both { url, reconnectAttempts, reconnectDelay } and legacy { wsUrl, maxReconnectAttempts, reconnectInterval }
+        this.wsUrl = options.url || options.wsUrl || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/game/`;
+        this.reconnectInterval = options.reconnectDelay || options.reconnectInterval || 3000;
+        this.maxReconnectAttempts = options.reconnectAttempts || options.maxReconnectAttempts || 5;
         this.pingInterval = options.pingInterval || 30000;
         
         this.ws = null;
         this.reconnectAttempts = 0;
-        this.isConnected = false;
+        this.connected = false; // internal connection state
         this.pingTimer = null;
         
         // Event handlers
@@ -24,11 +25,16 @@ class RPGWebSocketClient {
         
         // Handle page visibility for connection management
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && !this.isConnected) {
+            if (document.visibilityState === 'visible' && !this.connected) {
                 this.connect();
             }
         });
     }
+
+    // Compatibility shim with dashboard/map usage
+    addEventListener(event, handler) { this.on(event, handler); }
+    removeEventListener(event, handler) { this.off(event, handler); }
+    isConnected() { return this.connected; }
     
     /**
      * Establish WebSocket connection
@@ -47,9 +53,9 @@ class RPGWebSocketClient {
      * Setup WebSocket event listeners
      */
     setupEventListeners() {
-        this.ws.onopen = (event) => {
+this.ws.onopen = (event) => {
             console.log('WebSocket connected');
-            this.isConnected = true;
+            this.connected = true;
             this.reconnectAttempts = 0;
             
             // Send queued messages
@@ -71,9 +77,9 @@ class RPGWebSocketClient {
             }
         };
         
-        this.ws.onclose = (event) => {
+this.ws.onclose = (event) => {
             console.log('WebSocket disconnected:', event.code, event.reason);
-            this.isConnected = false;
+            this.connected = false;
             this.stopPingTimer();
             
             // Trigger disconnected event
@@ -131,6 +137,11 @@ class RPGWebSocketClient {
                 this.trigger('inventory_update', messageData);
                 break;
                 
+            case 'character':
+                // Character HUD snapshot (level/xp/hp/gold/etc.)
+                this.trigger('character_updated', messageData);
+                break;
+                
             case 'character_stats':
                 this.trigger('character_stats', messageData);
                 break;
@@ -153,7 +164,7 @@ class RPGWebSocketClient {
             data: data
         };
         
-        if (this.isConnected) {
+if (this.connected) {
             this.ws.send(JSON.stringify(message));
         } else {
             // Queue message for later
@@ -193,7 +204,7 @@ class RPGWebSocketClient {
      */
     startPingTimer() {
         this.pingTimer = setInterval(() => {
-            if (this.isConnected) {
+if (this.connected) {
                 this.send('ping', { timestamp: Date.now() });
             }
         }, this.pingInterval);
@@ -326,9 +337,9 @@ class RPGWebSocketClient {
     /**
      * Close connection
      */
-    disconnect() {
+disconnect() {
         this.stopPingTimer();
-        if (this.ws && this.isConnected) {
+        if (this.ws && this.connected) {
             this.ws.close(1000, 'Client disconnect');
         }
     }
@@ -336,9 +347,9 @@ class RPGWebSocketClient {
     /**
      * Get connection status
      */
-    getConnectionStatus() {
+getConnectionStatus() {
         return {
-            connected: this.isConnected,
+            connected: this.connected,
             reconnectAttempts: this.reconnectAttempts,
             queuedMessages: this.messageQueue.length
         };

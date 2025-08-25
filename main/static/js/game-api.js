@@ -153,6 +153,15 @@ class RPGGameAPI {
     async getMapData(zoom = 15) {
         return this.get('map/', { zoom });
     }
+
+    // Territories
+    async getTerritories() {
+        return this.get('territories/');
+    }
+
+    async travelToTerritory(territoryId) {
+        return this.post('territory/travel/', { territory_id: territoryId });
+    }
     
     // Inventory
     async getInventory() {

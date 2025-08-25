@@ -168,7 +168,7 @@ function showCombatFeedback(npcId, damage) {
         top: -20px;
         left: 50%;
         transform: translateX(-50%);
-        color: #FF4444;
+        color: #2196F3;
         font-weight: bold;
         font-size: 14px;
         text-shadow: 0 0 3px black;

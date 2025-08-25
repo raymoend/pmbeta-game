@@ -11,6 +11,32 @@ let npcCache = {};
 let currentPlayer = null;
 let map = null;
 
+// SVG data-URI generator for glyph placeholders
+function svgDataUri(bgColor, glyph) {
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>
+  <rect x='0' y='0' width='100%' height='100%' rx='6' ry='6' fill='${bgColor}' />
+  <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-size='18'>${glyph}</text>
+</svg>`;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
+// Determine NPC placeholder icon from type/name
+function getNPCPlaceholderIcon(npc) {
+    const name = String(npc?.name || '').toLowerCase();
+    const type = String(npc?.npc_type || '').toLowerCase();
+    const alive = !!npc?.is_alive;
+    let glyph = '👤';
+    let color = alive ? '#FF5722' : '#757575';
+    if (/wolf/.test(name) || /wolf/.test(type)) glyph = '🐺';
+    else if (/bear/.test(name) || /bear/.test(type)) glyph = '🐻';
+    else if (/goblin|troll|orc/.test(name) || /goblin|troll|orc/.test(type)) glyph = '👹';
+    else if (/skeleton/.test(name) || /skeleton/.test(type)) glyph = '💀';
+    else if (/zombie|undead/.test(name) || /zombie|undead/.test(type)) glyph = '🧟';
+    else if (/dragon/.test(name) || /dragon/.test(type)) glyph = '🐲';
+    else if (/merchant|trader/.test(name) || /merchant|trader/.test(type)) glyph = '🧑‍🌾';
+    return svgDataUri(color, glyph);
+}
+
 /**
  * Initialize NPC system
  * @param {mapboxgl.Map} mapInstance - Mapbox map instance
@@ -85,6 +111,7 @@ export function createNPCMarker(npc) {
     const isAlive = npcData.is_alive;
     const color = isAlive ? '#FF5722' : '#757575';
     const nameInitials = npcData.name ? npcData.name.substring(0, 2).toUpperCase() : 'NP';
+    const iconUrl = getNPCPlaceholderIcon(npcData);
     
     // Create marker element with professional styling
     const el = document.createElement('div');
@@ -115,7 +142,7 @@ export function createNPCMarker(npc) {
             user-select: none;
             ${!isAlive ? 'opacity: 0.5; filter: grayscale(50%);' : ''}
         ">
-            ${nameInitials}
+            <img src="${iconUrl}" alt="${npcData.name || 'NPC'}" style="width:24px;height:24px;" />
         </div>
     `;
     

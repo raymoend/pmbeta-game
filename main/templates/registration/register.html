@@ -1,232 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register - PMBeta</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Register & Create Character - PMBeta</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #4b6cb7 50%, #182848 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #333;
+            color: #e5e7eb;
         }
-        
         .container {
-            max-width: 400px;
-            width: 90%;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 40px;
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 720px;
+            width: 92%;
+            background: rgba(17,24,39,0.92);
+            padding: 28px;
+            border-radius: 14px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+            border: 1px solid rgba(255,255,255,0.06);
         }
-        
-        .logo {
-            font-size: 2.5rem;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 10px;
-            text-align: center;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        .logo { font-size: 1.6rem; font-weight: 800; color: #60a5fa; text-align: center; margin-bottom: 4px; }
+        .subtitle { font-size: 1rem; color: #9ca3af; text-align: center; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        .col { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 16px; }
+        .section-title { font-size: 1.05rem; font-weight: 700; color: #93c5fd; margin-bottom: 12px; }
+        .form-group { margin-bottom: 14px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; color: #cbd5e1; }
+        input[type="text"], input[type="password"] {
+            width: 100%; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(31,41,55,0.85); color: #e5e7eb; font-size: 0.95rem;
         }
-        
-        .subtitle {
-            font-size: 1.1rem;
-            color: #666;
-            margin-bottom: 30px;
-            text-align: center;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #555;
-        }
-        
-        input[type="text"],
-        input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e8ed;
-            border-radius: 8px;
-            font-size: 1rem;
-            transition: border-color 0.3s ease;
-        }
-        
-        input[type="text"]:focus,
-        input[type="password"]:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .helptext {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 5px;
-            line-height: 1.4;
-        }
-        
-        .errorlist {
-            list-style: none;
-            margin-bottom: 10px;
-        }
-        
-        .errorlist li {
-            color: #e74c3c;
-            font-size: 0.9rem;
-            margin-bottom: 5px;
-        }
-        
-        .btn {
-            width: 100%;
-            padding: 15px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-        
-        .links {
-            text-align: center;
-            margin-top: 20px;
-        }
-        
-        .links a {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: bold;
-        }
-        
-        .links a:hover {
-            text-decoration: underline;
-        }
-        
-        .messages {
-            margin-bottom: 20px;
-        }
-        
-        .messages .alert {
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-        
-        .messages .alert-success {
-            background-color: #d4edda;
-            border: 1px solid #c3e6cb;
-            color: #155724;
-        }
-        
-        .messages .alert-error {
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            color: #721c24;
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                padding: 30px 20px;
-            }
-            
-            .logo {
-                font-size: 2rem;
-            }
-        }
+        input[type="text"]:focus, input[type="password"]:focus { outline: none; border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96,165,250,0.2); }
+        .helptext { font-size: 0.85rem; color: #94a3b8; margin-top: 4px; }
+        .errorlist, .error-list { list-style: none; margin: 8px 0 0 0; padding: 0; }
+        .errorlist li, .error-list li { color: #fca5a5; font-size: 0.9rem; margin-bottom: 5px; }
+        .availability { font-size: 0.85rem; margin-top: 6px; }
+        .ok { color: #86efac; }
+        .bad { color: #fca5a5; }
+        .radio-group { display: grid; gap: 8px; }
+        .radio-option { display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 8px; background: rgba(31,41,55,0.6); border: 1px solid rgba(255,255,255,0.06); }
+        .color-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.25); display: inline-block; }
+        .btn { width: 100%; padding: 14px; background: linear-gradient(45deg, #2563eb, #7c3aed); color: white; border: none; border-radius: 10px; font-size: 1.05rem; font-weight: 700; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.2s ease; margin-top: 10px; }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(37,99,235,0.28); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .footer { text-align: center; margin-top: 12px; color: #9ca3af; }
+        .footer a { color: #93c5fd; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+        @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="logo">PMBeta</div>
-        <div class="subtitle">Create Your Account</div>
-        
+        <div class="subtitle">Create your account and character</div>
+
         {% if messages %}
-            <div class="messages">
-                {% for message in messages %}
-                    <div class="alert alert-{{ message.tags }}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            </div>
+          <div class="messages">
+            {% for message in messages %}
+              <div class="error-list {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+          </div>
         {% endif %}
-        
-        <form method="post">
+
+        <form method="post" id="registerForm">
             {% csrf_token %}
-            
-            <div class="form-group">
-                <label for="{{ form.username.id_for_label }}">Username:</label>
-                {{ form.username }}
-                {% if form.username.errors %}
-                    <ul class="errorlist">
-                        {% for error in form.username.errors %}
-                            <li>{{ error }}</li>
-                        {% endfor %}
-                    </ul>
-                {% endif %}
-                {% if form.username.help_text %}
-                    <div class="helptext">{{ form.username.help_text }}</div>
-                {% endif %}
+            <div class="grid">
+                <div class="col">
+                    <div class="section-title">Account</div>
+                    <div class="form-group">
+                        <label for="{{ form.username.id_for_label }}">Username</label>
+                        {{ form.username }}
+                        <div id="usernameAvail" class="availability"></div>
+                        {% if form.username.errors %}
+                          <ul class="errorlist">{% for e in form.username.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+                        {% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="{{ form.password1.id_for_label }}">Password</label>
+                        {{ form.password1 }}
+                        {% if form.password1.errors %}
+                          <ul class="errorlist">{% for e in form.password1.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+                        {% elif form.password1.help_text %}
+                          <div class="helptext">{{ form.password1.help_text }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label for="{{ form.password2.id_for_label }}">Confirm Password</label>
+                        {{ form.password2 }}
+                        <div id="pwMatch" class="availability"></div>
+                        {% if form.password2.errors %}
+                          <ul class="errorlist">{% for e in form.password2.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="section-title">Character</div>
+                    <div class="form-group">
+                        <label for="{{ form.character_name.id_for_label }}">Character Name</label>
+                        {{ form.character_name }}
+                        <div id="charAvail" class="availability"></div>
+                        {% if form.character_name.errors %}
+                          <ul class="errorlist">{% for e in form.character_name.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+                        {% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label>Class</label>
+                        <div class="radio-group">
+                            {% for choice in form.class_type %}
+                              <label class="radio-option">{{ choice.tag }} <span style="margin-left:6px;">{{ choice.choice_label }}</span></label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Flag Color</label>
+                        <div class="radio-group">
+                            {% for choice in form.flag_color %}
+                              <label class="radio-option">{{ choice.tag }} <span style="margin-left:6px;">{{ choice.choice_label }}</span></label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="form-group">
-                <label for="{{ form.password1.id_for_label }}">Password:</label>
-                {{ form.password1 }}
-                {% if form.password1.errors %}
-                    <ul class="errorlist">
-                        {% for error in form.password1.errors %}
-                            <li>{{ error }}</li>
-                        {% endfor %}
-                    </ul>
-                {% endif %}
-                {% if form.password1.help_text %}
-                    <div class="helptext">{{ form.password1.help_text }}</div>
-                {% endif %}
-            </div>
-            
-            <div class="form-group">
-                <label for="{{ form.password2.id_for_label }}">Confirm Password:</label>
-                {{ form.password2 }}
-                {% if form.password2.errors %}
-                    <ul class="errorlist">
-                        {% for error in form.password2.errors %}
-                            <li>{{ error }}</li>
-                        {% endfor %}
-                    </ul>
-                {% endif %}
-                {% if form.password2.help_text %}
-                    <div class="helptext">{{ form.password2.help_text }}</div>
-                {% endif %}
-            </div>
-            
-            <button type="submit" class="btn">Create Account</button>
+            <button type="submit" id="submitBtn" class="btn" disabled>Create Account & Enter World</button>
         </form>
-        
-        <div class="links">
-            <p>Already have an account? <a href="{% url 'login' %}">Login here</a></p>
+        <div class="footer">
+            <p>Already have an account? <a href="{% url 'login' %}">Login</a></p>
             <p><a href="{% url 'index' %}">← Back to Home</a></p>
         </div>
     </div>
+
+    <script>
+      // Simple helper to get field by id
+      function $(id) { return document.getElementById(id); }
+      const usernameEl = document.getElementById('{{ form.username.id_for_label }}');
+      const charEl = document.getElementById('character_name');
+      const pw1 = document.getElementById('{{ form.password1.id_for_label }}');
+      const pw2 = document.getElementById('{{ form.password2.id_for_label }}');
+      const usernameAvail = $('usernameAvail');
+      const charAvail = $('charAvail');
+      const pwMatch = $('pwMatch');
+      const submitBtn = $('submitBtn');
+
+      let usernameOk = false;
+      let charOk = false;
+      let pwOk = false;
+      let debounceTimer = null;
+
+      function setStatus(el, ok, msg) {
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = 'availability ' + (ok ? 'ok' : 'bad');
+      }
+
+      function updateSubmit() {
+        submitBtn.disabled = !(usernameOk && charOk && pwOk);
+      }
+
+      function debounce(fn, delay=300) {
+        return (...args) => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => fn(...args), delay);
+        };
+      }
+
+      async function checkUsername() {
+        const v = (usernameEl?.value || '').trim();
+        if (!v) { usernameOk = false; setStatus(usernameAvail, false, ''); updateSubmit(); return; }
+        try {
+          const res = await fetch(`/api/rpg/availability/username/?username=${encodeURIComponent(v)}`);
+          const data = await res.json();
+          usernameOk = !!(data && data.available);
+          setStatus(usernameAvail, usernameOk, usernameOk ? '✓ Available' : '✗ Taken');
+        } catch (_) { usernameOk = false; setStatus(usernameAvail, false, ''); }
+        updateSubmit();
+      }
+      async function checkChar() {
+        const v = (charEl?.value || '').trim();
+        if (!v) { charOk = false; setStatus(charAvail, false, ''); updateSubmit(); return; }
+        try {
+          const res = await fetch(`/api/rpg/availability/character/?name=${encodeURIComponent(v)}`);
+          const data = await res.json();
+          charOk = !!(data && data.available);
+          let msg = charOk ? '✓ Available' : '✗ Taken';
+          if (!charOk && data && data.suggestion) { msg += ` — try "${data.suggestion}"`; }
+          setStatus(charAvail, charOk, msg);
+        } catch (_) { charOk = false; setStatus(charAvail, false, ''); }
+        updateSubmit();
+      }
+      function checkPw() {
+        const a = pw1?.value || '';
+        const b = pw2?.value || '';
+        pwOk = !!a && a === b && a.length >= 8;
+        pwMatch && (pwMatch.textContent = (a && b) ? (pwOk ? '✓ Passwords match' : '✗ Passwords do not match') : '');
+        pwMatch && (pwMatch.className = 'availability ' + (pwOk ? 'ok' : 'bad'));
+        updateSubmit();
+      }
+
+      usernameEl && usernameEl.addEventListener('input', debounce(checkUsername, 350));
+      charEl && charEl.addEventListener('input', debounce(checkChar, 350));
+      pw1 && pw1.addEventListener('input', checkPw);
+      pw2 && pw2.addEventListener('input', checkPw);
+
+      // Initial state
+      checkUsername(); checkChar(); checkPw();
+    </script>
 </body>
 </html>

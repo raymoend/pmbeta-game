@@ -10,6 +10,13 @@ from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
 
 
+import re
+
+def _safe_group(name: str) -> str:
+    # Keep only ASCII alphanumerics, hyphens, underscores, or periods; truncate to 90
+    s = re.sub(r"[^A-Za-z0-9._-]", "_", str(name))
+    return s[:90]
+
 class RPGGameConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for real-time RPG game updates
@@ -33,21 +40,22 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             return
         
         # Join personal group for character-specific messages
-        self.character_group_name = f'character_{self.character.id}'
+        self.character_group_name = _safe_group(f'character_{self.character.id}')
         await self.channel_layer.group_add(
             self.character_group_name,
             self.channel_name
         )
         
-        # Join location-based group
-        self.location_group_name = f'location_{int(self.character.lat * 1000)}_{int(self.character.lon * 1000)}'
+        # Join geo tile-based group
+        from .utils.geo import tile_for
+        self.geo_group = _safe_group(tile_for(float(self.character.lat), float(self.character.lon)))
         await self.channel_layer.group_add(
-            self.location_group_name,
+            self.geo_group,
             self.channel_name
         )
         
         # Join global game room
-        self.global_group_name = 'global_game'
+        self.global_group_name = _safe_group('global_game')
         await self.channel_layer.group_add(
             self.global_group_name,
             self.channel_name
@@ -57,6 +65,16 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         
         # Send initial game data
         await self.send_initial_data()
+        
+        # Also send an initial character snapshot for HUDs that listen for 'character'
+        try:
+            payload = await self._build_ws_character_payload()
+            await self.send(text_data=json.dumps({
+                'type': 'character',
+                'data': payload,
+            }))
+        except Exception:
+            pass
         
         print(f"Character {self.character.name} ({self.user.username}) connected to RPG game")
     
@@ -69,9 +87,9 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
         
-        if hasattr(self, 'location_group_name'):
+        if hasattr(self, 'geo_group') and self.geo_group:
             await self.channel_layer.group_discard(
-                self.location_group_name,
+                self.geo_group,
                 self.channel_name
             )
         
@@ -97,8 +115,11 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.handle_chat(message_data)
             elif message_type == 'get_game_data':
                 await self.send_initial_data()
-            elif message_type == 'attack':
+            elif message_type in ('attack', 'flag_attack'):
                 await self.handle_attack(message_data)
+            elif message_type == 'player_movement':
+                # normalize to move handler
+                await self.handle_move({'target': {'lat': data.get('lat'), 'lon': data.get('lon')}})
             elif message_type == 'flee':
                 await self.handle_flee(message_data)
             elif message_type == 'use_skill':
@@ -135,27 +156,27 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             # Get current position
             old_lat = self.character.lat
             old_lon = self.character.lon
-            old_location_group = f'location_{int(old_lat * 1000)}_{int(old_lon * 1000)}'
+            from .utils.geo import tile_for
+            old_geo_group = getattr(self, 'geo_group', None)
             
             # Update character position
             await self.update_character_position(target_lat, target_lon)
             
-            # Update location group
-            new_location_group = f'location_{int(target_lat * 1000)}_{int(target_lon * 1000)}'
-            if old_location_group != new_location_group:
-                # Leave old location group
-                await self.channel_layer.group_discard(
-                    self.location_group_name,
-                    self.channel_name
-                )
-                # Join new location group
-                self.location_group_name = new_location_group
+            # Update geo tile group if changed
+            new_geo_group = _safe_group(tile_for(float(target_lat), float(target_lon)))
+            if old_geo_group != new_geo_group:
+                if old_geo_group:
+                    await self.channel_layer.group_discard(
+                        old_geo_group,
+                        self.channel_name
+                    )
                 await self.channel_layer.group_add(
-                    self.location_group_name,
+                    new_geo_group,
                     self.channel_name
                 )
+                self.geo_group = new_geo_group
             
-            # Broadcast movement to location groups
+            # Broadcast movement to nearby tile group(s)
             movement_data = {
                 'character_id': str(self.character.id),
                 'character_name': self.character.name,
@@ -170,24 +191,36 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Send to both old and new location groups
-            await self.channel_layer.group_send(
-                old_location_group,
-                {
-                    'type': 'character_moved',
-                    'data': movement_data
-                }
-            )
-            
-            if old_location_group != new_location_group:
+            # Send to both old and new geo groups as applicable
+            if old_geo_group:
                 await self.channel_layer.group_send(
-                    new_location_group,
+                    old_geo_group,
+                    {
+                        'type': 'character_moved',
+                        'data': movement_data
+                    }
+                )
+            if old_geo_group != self.geo_group and self.geo_group:
+                await self.channel_layer.group_send(
+                    self.geo_group,
                     {
                         'type': 'character_moved',
                         'data': movement_data
                     }
                 )
             
+            # Territory presence server-side hint
+            owner_id = await self.get_territory_owner_at(target_lat, target_lon)
+            await self.send(text_data=json.dumps({
+                'type': 'territory_presence',
+                'data': {
+                    'owner_id': owner_id,
+                    'relation': ('self' if owner_id and owner_id == getattr(self.user, 'id', None) else ('enemy' if owner_id else 'none')),
+                    'lat': target_lat,
+                    'lon': target_lon
+                }
+            }))
+
             print(f"Character {self.character.name} moved to {target_lat:.6f}, {target_lon:.6f}")
             
         except (ValueError, KeyError) as e:
@@ -442,6 +475,103 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             'data': event['data']
         }))
     
+    async def flag_event(self, event):
+        """Handle flag event broadcast from views (tile groups)"""
+        payload = event.get('payload', {})
+        await self.send(text_data=json.dumps(payload))
+
+    async def inventory_update(self, event):
+        """Push a fresh inventory snapshot to the client.
+        Triggered by server-side events (e.g., loot drops, trades).
+        """
+        try:
+            data = await self._build_ws_inventory_payload()
+        except Exception:
+            data = {
+                'items': [],
+                'total_weight': 0,
+                'max_capacity': 50,
+                'gold': getattr(self.character, 'gold', 0),
+            }
+        await self.send(text_data=json.dumps({
+            'type': 'inventory',
+            'data': data,
+        }))
+
+    async def character_update(self, event):
+        """Push a fresh character snapshot (level/xp/hp/gold/stats) to the client.
+        Triggered by server-side events (e.g., combat results, stat allocation).
+        """
+        try:
+            data = await self._build_ws_character_payload()
+        except Exception:
+            data = {
+                'id': str(getattr(self.character, 'id', '')),
+                'name': getattr(self.character, 'name', ''),
+                'level': getattr(self.character, 'level', 1),
+                'health': getattr(self.character, 'current_hp', 0),
+                'max_health': getattr(self.character, 'max_hp', 0),
+                'experience': getattr(self.character, 'experience', 0),
+                'experience_to_next': 1000,
+                'gold': getattr(self.character, 'gold', 0),
+            }
+        await self.send(text_data=json.dumps({
+            'type': 'character',
+            'data': data,
+        }))
+
+    @database_sync_to_async
+    def _build_ws_inventory_payload(self):
+        """Build inventory payload in the shape the frontend expects.
+        Items include basic fields; weight/capacity are simple placeholders for now.
+        """
+        from .models import InventoryItem  # local import to avoid cycles
+        items = []
+        inv_qs = self.character.inventory.select_related('item_template').all()
+        for inv in inv_qs:
+            tpl = inv.item_template
+            items.append({
+                'id': str(inv.id),
+                'name': tpl.name,
+                'type': tpl.item_type,
+                'rarity': tpl.rarity,
+                'quantity': inv.quantity,
+                'is_equipped': getattr(inv, 'is_equipped', False),
+                'value': getattr(tpl, 'base_value', 0),
+            })
+        return {
+            'items': items,
+            'total_weight': sum(int(i.get('quantity') or 0) for i in items),
+            'max_capacity': 50,
+            'gold': self.character.gold,
+        }
+
+    @database_sync_to_async
+    def _build_ws_character_payload(self):
+        """Build character snapshot payload expected by the dashboard HUD.
+        Includes core stats and XP progress info.
+        """
+        exp_needed = self.character.experience_needed_for_next_level()
+        return {
+            'id': str(self.character.id),
+            'name': self.character.name,
+            'level': self.character.level,
+            'health': self.character.current_hp,
+            'max_health': self.character.max_hp,
+            'mana': self.character.current_mana,
+            'max_mana': self.character.max_mana,
+            'stamina': self.character.current_stamina,
+            'max_stamina': self.character.max_stamina,
+            'experience': self.character.experience,
+            'experience_to_next': exp_needed,
+            'gold': self.character.gold,
+            'strength': self.character.strength,
+            'defense': self.character.defense,
+            'vitality': self.character.vitality,
+            'agility': self.character.agility,
+            'intelligence': self.character.intelligence,
+        }
+    
     # Database operations (async)
     @database_sync_to_async
     def get_character(self):
@@ -470,6 +600,18 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         self.character.lon = lon
         self.character.save(update_fields=['lat', 'lon'])
     
+    @database_sync_to_async
+    def get_territory_owner_at(self, lat, lon):
+        from .models import TerritoryFlag
+        from .services.territory import flag_radius_m
+        # Simple scan; optimize with bbox if needed
+        for f in TerritoryFlag.objects.all().only('lat','lon','owner_id','level'):
+            # rough distance check in meters
+            from .movement import haversine_m
+            if haversine_m(lat, lon, f.lat, f.lon) <= flag_radius_m(f) + 1e-6:
+                return f.owner_id
+        return None
+
     @database_sync_to_async
     def get_game_data(self):
         """Get initial game data for character"""
@@ -502,15 +644,21 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         
         monsters_data = []
         for monster in nearby_monsters:
+            m_name = getattr(monster, 'name', None)
+            if not m_name:
+                # Fallback name if model lacks a 'name' field
+                m_type = getattr(monster, 'monster_type', getattr(monster, 'npc_type', 'Mob'))
+                m_name = f"{m_type.title()} Lv{getattr(monster, 'level', '?')}"
+            m_type_out = getattr(monster, 'monster_type', getattr(monster, 'npc_type', 'mob'))
             monsters_data.append({
-                'id': str(monster.id),
-                'name': monster.name,
-                'level': monster.level,
-                'latitude': monster.lat,
-                'longitude': monster.lon,
-                'current_health': monster.current_hp,
-                'max_health': monster.max_hp,
-                'monster_type': monster.monster_type
+                'id': str(getattr(monster, 'id', '')),
+                'name': m_name,
+                'level': getattr(monster, 'level', 1),
+                'latitude': getattr(monster, 'lat', 0.0),
+                'longitude': getattr(monster, 'lon', 0.0),
+                'current_health': getattr(monster, 'current_hp', getattr(monster, 'hp', 0)),
+                'max_health': getattr(monster, 'max_hp', getattr(monster, 'hp_max', 0)),
+                'monster_type': m_type_out
             })
         
         return {
@@ -531,24 +679,27 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def get_inventory_data(self):
-        """Get character inventory data"""
-        inventory_items = self.character.inventory.all()
-        items_data = []
-        
-        for item in inventory_items:
-            items_data.append({
-                'id': str(item.id),
-                'item_type': item.item_type,
-                'quantity': item.quantity,
-                'durability': item.durability,
-                'max_durability': item.max_durability,
-                'is_equipped': item.is_equipped
+        """Get character inventory data for WebSocket response.
+        Returns a shape compatible with the dashboard normalizer.
+        """
+        inv_qs = self.character.inventory.select_related('item_template').all()
+        items = []
+        for inv in inv_qs:
+            tpl = inv.item_template
+            items.append({
+                'id': str(inv.id),
+                'name': tpl.name,
+                'type': tpl.item_type,
+                'rarity': tpl.rarity,
+                'quantity': inv.quantity,
+                'is_equipped': getattr(inv, 'is_equipped', False),
+                'value': getattr(tpl, 'base_value', 0),
             })
-        
         return {
-            'items': items_data,
-            'capacity': 50,  # Could be dynamic based on character stats
-            'weight': sum(item.quantity for item in inventory_items)
+            'items': items,
+            'total_weight': sum(int(i.get('quantity') or 0) for i in items),
+            'max_capacity': 50,
+            'gold': self.character.gold,
         }
     
     @database_sync_to_async

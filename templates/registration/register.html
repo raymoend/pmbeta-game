@@ -100,6 +100,11 @@
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(233, 69, 96, 0.3);
         }
+        /* Simple inline grid for class/color radios */
+        .class-grid, .color-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+        .class-grid input[type="radio"], .color-grid input[type="radio"] { margin-right: 6px; }
+        .color-grid label { display: flex; align-items: center; gap: 8px; }
+        .swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #333; display: inline-block; }
         
         .login-link {
             text-align: center;
@@ -149,6 +154,17 @@
                     {{ form.non_field_errors }}
                 </div>
             {% endif %}
+            {% if form.errors %}
+                <div class="error-list" style="margin-top:10px;">
+                    <ul>
+                        {% for field, errors in form.errors.items %}
+                            {% for error in errors %}
+                                <li>{{ field|capfirst }}: {{ error }}</li>
+                            {% endfor %}
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
             
             <div class="form-group">
                 <label for="{{ form.username.id_for_label }}">Username</label>
@@ -188,10 +204,30 @@
                     <div class="form-help">{{ form.password2.help_text }}</div>
                 {% endif %}
             </div>
+
+            <div class="form-group">
+                <label for="{{ form.character_name.id_for_label }}">Character Name</label>
+                {{ form.character_name }}
+                {% if form.character_name.errors %}
+                    <div class="error-list">{{ form.character_name.errors }}</div>
+                {% endif %}
+            </div>
+
+            <div class="form-group">
+                <label>Class</label>
+                <div class="class-grid">
+                    {{ form.class_type }}
+                </div>
+                {% if form.class_type.errors %}
+                    <div class="error-list">{{ form.class_type.errors }}</div>
+                {% endif %}
+            </div>
             
             <div class="form-group">
-                <label for="{{ form.flag_color.id_for_label }}">🚩 Flag Color</label>
-                {{ form.flag_color }}
+                <label for="{{ form.flag_color.id_for_label }}">🚩 Flag Color (Basic)</label>
+                <div class="color-grid">
+                    {{ form.flag_color }}
+                </div>
                 {% if form.flag_color.errors %}
                     <div class="error-list">
                         {{ form.flag_color.errors }}

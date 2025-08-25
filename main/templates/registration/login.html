@@ -205,6 +205,9 @@
         
         <div class="links">
             <p>Don't have an account? <a href="{% url 'register' %}">Register here</a></p>
+            {% if user.is_authenticated %}
+                <p><a href="{% url 'rpg_game' %}" style="color: #4CAF50; font-weight: bold;">🎮 Play Game</a></p>
+            {% endif %}
             <p><a href="{% url 'index' %}">← Back to Home</a></p>
         </div>
     </div>

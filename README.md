@@ -135,9 +135,27 @@ The application will be available at: http://localhost:8000
 - `POST /api/spawn-structures/` - Admin: Spawn test structures
 
 ### WebSocket Endpoint
-- `ws://localhost:8000/ws/game/` - Real-time game communication
+- `ws://localhost:8000/ws/game/` - Real-time game communication (in-memory by default)
+- For production or multi-instance, set REDIS_URL and switch Channels to Redis (see settings.py production block).
 
 ## Development
+
+### Windows quickstart (with Redis and background flag income)
+
+- Open PowerShell in the repo root:
+  - scripts\dev_up.ps1
+- This will:
+  - Start Redis via Docker (if available) or instruct you to start Memurai/Redis
+  - Create/activate a venv, install dependencies, run migrations
+  - Start the background flag ticker (process_flags --loop) minimized
+  - Launch Django on http://localhost:8000
+
+Stop all background processes and Redis (if dockerized):
+- scripts\dev_down.ps1
+
+Note: If you don’t want the ticker, run: scripts\dev_up.ps1 -NoTick
+
+### Development
 
 ### Project Structure
 ```
@@ -174,19 +192,78 @@ pmbeta-web/
 Set these in production:
 - `SECRET_KEY`: Django secret key
 - `DEBUG=False`
-- `ALLOWED_HOSTS`: Your domain
+- `ALLOWED_HOSTS`: Your domain (and Railway wildcard if using Railway)
 - `DATABASE_URL`: PostgreSQL connection string
-- `REDIS_URL`: Redis connection string
+- `REDIS_URL`: Redis connection string (optional; required for multi-instance WebSockets)
+- `DJANGO_SETTINGS_MODULE`: Use `pmbeta.settings_production` for production
+- `MAPBOX_ACCESS_TOKEN`: Your Mapbox token (override for production)
 
-### Docker Deployment
+### Production on Railway (Recommended)
+
+Follow these steps to deploy on Railway with Daphne + Channels:
+
+1) Prerequisites
+- Install Railway CLI: `npm i -g @railway/cli`
+- Login: `railway login`
+
+2) Create/link project and add services (from repo root)
+```
+railway init   # or: railway link
+railway add postgresql
+# Optional (recommended for scale):
+railway add redis
+```
+
+3) Configure environment variables
+```
+railway variables set \
+  DJANGO_SETTINGS_MODULE=pmbeta.settings \
+  SECRET_KEY=<generated-strong-secret> \
+  DEBUG=0 \
+  RAILWAY_ENVIRONMENT=production \
+  ALLOWED_HOSTS="*.up.railway.app,*.railway.app" \
+  CSRF_TRUSTED_ORIGINS="https://*.up.railway.app,https://*.railway.app" \
+  MAPBOX_ACCESS_TOKEN=<your_mapbox_token>
+```
+Railway injects `DATABASE_URL` (and `REDIS_URL` if you added Redis) automatically.
+
+4) Healthcheck
+- This repo exposes `GET /health/` which returns `{"status":"ok"}`.
+- In Railway, set healthcheck path to `/health/`.
+
+5) Start/Predeploy
+- This repo ships with `railway.json` that runs:
+  - `python set_django_settings.py && python manage.py migrate && python manage.py collectstatic --noinput && python manage.py setup_railway && daphne -b 0.0.0.0 -p $PORT pmbeta.asgi:application`
+- `setup_railway` seeds starter items, monster templates, regions, and creates an admin user (default password `admin123`). Override with: `--admin-password=...` by adjusting the start command if desired.
+
+6) Deploy
+```
+railway up
+railway logs -f
+```
+
+7) Verify
+- Open `https://YOUR-SERVICE.up.railway.app/`
+- Health: `https://YOUR-SERVICE.up.railway.app/health/`
+- WebSocket path: `wss://YOUR-SERVICE.up.railway.app/ws/game/`
+
+8) Post-deploy
+- Create a superuser (optional if not relying on default): `railway run python manage.py createsuperuser`
+- For custom domain, update `ALLOWED_HOSTS` (domain only) and `CSRF_TRUSTED_ORIGINS` (with `https://` scheme).
+- For multi-instance WebSockets, add Redis service so `CHANNEL_LAYERS` uses `channels-redis`.
+
+### Docker Deployment (Alternative)
 ```dockerfile
-# Example Dockerfile structure
-FROM python:3.9
+# Example Dockerfile (Daphne + ASGI)
+FROM python:3.12-slim
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY . .
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+ENV DJANGO_SETTINGS_MODULE=pmbeta.settings_production
+RUN python manage.py collectstatic --noinput || true
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "pmbeta.asgi:application"]
 ```
 
 ## Contributing

@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parallel Kingdom Flag Client (Java Style)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .control-panel {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .map-canvas {
+            border: 2px solid #333;
+            background-color: #e8f4f8;
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .status-panel {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        input[type="number"] {
+            width: 80px;
+            padding: 5px;
+            margin: 0 5px;
+        }
+        
+        .flag-info {
+            background: #f9f9f9;
+            border-left: 4px solid #2196F3;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        
+        .log {
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 4px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏴 Parallel Kingdom Flag Client (Java Style)</h1>
+        
+        <div class="control-panel">
+            <h3>Controls</h3>
+            <button onclick="fetchAllFlags()">Refresh All Flags</button>
+            <button onclick="checkInfluence()">Check Position Influence</button>
+            <button onclick="movePlayer()">Update Player Position</button>
+            <br><br>
+            
+            <label>Test Coordinates:</label>
+            <input type="number" id="testX" step="0.0001" placeholder="Latitude (X)" value="40.7128">
+            <input type="number" id="testY" step="0.0001" placeholder="Longitude (Y)" value="-74.0060">
+            
+            <label>Player Position:</label>
+            <input type="number" id="playerX" step="0.0001" placeholder="Player X">
+            <input type="number" id="playerY" step="0.0001" placeholder="Player Y">
+        </div>
+        
+        <div class="map-container">
+            <canvas id="mapCanvas" class="map-canvas" width="800" height="600"></canvas>
+        </div>
+        
+        <div class="status-panel">
+            <h3>Server Response</h3>
+            <div id="flagsDisplay"></div>
+            <div id="influenceDisplay"></div>
+            
+            <h4>Debug Log</h4>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        // Java-style Flag class equivalent
+        class Flag {
+            constructor(data) {
+                this.id = data.id;
+                this.ownerId = data.ownerId;
+                this.x = data.x;
+                this.y = data.y;
+                this.radius = data.radius;
+                this.createdAt = data.createdAt;
+                this.level = data.level || 1;
+                this.status = data.status || 'active';
+                this.ownerName = data.ownerName || 'Unknown';
+            }
+            
+            // Equivalent to inInfluence() method in Flag.java
+            inInfluence(px, py) {
+                const dx = px - this.x;
+                const dy = py - this.y;
+                return Math.sqrt(dx * dx + dy * dy) <= (this.radius / 111000.0); // Convert meters to degrees
+            }
+            
+            distanceTo(px, py) {
+                const dx = px - this.x;
+                const dy = py - this.y;
+                return Math.sqrt(dx * dx + dy * dy) * 111000.0; // Convert to meters
+            }
+        }
+        
+        let allFlags = [];
+        let canvas, ctx;
+        
+        // Initialize canvas
+        window.onload = function() {
+            canvas = document.getElementById('mapCanvas');
+            ctx = canvas.getContext('2d');
+            log('Flag client initialized - Java style implementation');
+            fetchAllFlags();
+        };
+        
+        // Equivalent to fetchFlags() in FlagClient.java
+        async function fetchAllFlags() {
+            try {
+                log('Fetching all flags from server...');
+                const response = await fetch('/api/flags');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const flagData = await response.json();
+                allFlags = flagData.map(data => new Flag(data));
+                
+                log(`Loaded ${allFlags.length} flags from server`);
+                displayFlags(allFlags);
+                drawFlags();
+                
+            } catch (error) {
+                log(`Error fetching flags: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        // Equivalent to flagsAffectingPlayer() call
+        async function checkInfluence() {
+            try {
+                const px = parseFloat(document.getElementById('testX').value);
+                const py = parseFloat(document.getElementById('testY').value);
+                
+                if (isNaN(px) || isNaN(py)) {
+                    log('Invalid coordinates provided');
+                    return;
+                }
+                
+                log(`Checking influence at position (${px}, ${py})`);
+                
+                const response = await fetch(`/api/flags/influence?px=${px}&py=${py}`);
+                const affectingFlags = await response.json();
+                
+                log(`Found ${affectingFlags.length} flags affecting position`);
+                displayInfluence(affectingFlags, px, py);
+                
+                // Highlight affecting flags on canvas
+                drawFlags();
+                highlightInfluencingFlags(affectingFlags, px, py);
+                
+            } catch (error) {
+                log(`Error checking influence: ${error.message}`);
+            }
+        }
+        
+        // Update player position (server-authoritative)
+        async function movePlayer() {
+            try {
+                const newX = parseFloat(document.getElementById('playerX').value);
+                const newY = parseFloat(document.getElementById('playerY').value);
+                
+                if (isNaN(newX) || isNaN(newY)) {
+                    log('Invalid player coordinates provided');
+                    return;
+                }
+                
+                log(`Attempting to move player to (${newX}, ${newY})`);
+                
+                const response = await fetch('/api/player/move', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCSRFToken()
+                    },
+                    body: JSON.stringify({
+                        x: newX,
+                        y: newY
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    log(`Player moved successfully: ${result.message}`);
+                    log(`Affecting flags: ${result.affectingFlags.length}`);
+                    
+                    // Update display
+                    displayPlayerPosition(result.newPosition, result.affectingFlags);
+                } else {
+                    log(`Movement failed: ${result.error}`);
+                }
+                
+            } catch (error) {
+                log(`Error moving player: ${error.message}`);
+            }
+        }
+        
+        // Draw flags on canvas (equivalent to JavaFX Circle drawing)
+        function drawFlags() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#ddd';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 50) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw flags as circles (like JavaFX implementation)
+            allFlags.forEach(flag => {
+                const screenX = (flag.x + 180) * (canvas.width / 360);  // Convert lat to screen
+                const screenY = (90 - flag.y) * (canvas.height / 180);  // Convert lon to screen  
+                const screenRadius = Math.max(5, flag.radius / 5000); // Scale radius
+                
+                // Draw flag circle with semi-transparent fill
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, screenRadius, 0, 2 * Math.PI);
+                
+                // Semi-transparent blue fill (changed from red)
+                ctx.fillStyle = 'rgba(33, 150, 243, 0.3)';
+                ctx.fill();
+                
+                // Blue stroke (changed from red)
+                ctx.strokeStyle = '#2196F3';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw flag info
+                ctx.fillStyle = '#000000';
+                ctx.font = '10px Arial';
+                ctx.fillText(`L${flag.level}`, screenX - 8, screenY - screenRadius - 5);
+                ctx.fillText(flag.ownerName.substring(0, 8), screenX - 20, screenY + screenRadius + 15);
+            });
+        }
+        
+        function highlightInfluencingFlags(flags, px, py) {
+            // Convert test coordinates to screen
+            const screenX = (px + 180) * (canvas.width / 360);
+            const screenY = (90 - py) * (canvas.height / 180);
+            
+            // Draw test position
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = '#00FF00';
+            ctx.fill();
+            ctx.strokeStyle = '#008800';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // Highlight influencing flags
+            flags.forEach(flag => {
+                const flagScreenX = (flag.x + 180) * (canvas.width / 360);
+                const flagScreenY = (90 - flag.y) * (canvas.height / 180);
+                const flagScreenRadius = Math.max(5, flag.radius / 5000);
+                
+                // Draw influence line
+                ctx.beginPath();
+                ctx.moveTo(screenX, screenY);
+                ctx.lineTo(flagScreenX, flagScreenY);
+                ctx.strokeStyle = '#0000FF';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Highlight flag
+                ctx.beginPath();
+                ctx.arc(flagScreenX, flagScreenY, flagScreenRadius + 3, 0, 2 * Math.PI);
+                ctx.strokeStyle = '#0000FF';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+            });
+        }
+        
+        function displayFlags(flags) {
+            const flagsDiv = document.getElementById('flagsDisplay');
+            flagsDiv.innerHTML = `<h4>All Flags (${flags.length})</h4>`;
+            
+            flags.forEach(flag => {
+                const flagInfo = document.createElement('div');
+                flagInfo.className = 'flag-info';
+                flagInfo.innerHTML = `
+                    <strong>Flag ${flag.id}</strong><br>
+                    Owner: ${flag.ownerName} (ID: ${flag.ownerId})<br>
+                    Position: (${flag.x.toFixed(4)}, ${flag.y.toFixed(4)})<br>
+                    Level: ${flag.level}, Radius: ${flag.radius}m, Status: ${flag.status}
+                `;
+                flagsDiv.appendChild(flagInfo);
+            });
+        }
+        
+        function displayInfluence(flags, px, py) {
+            const influenceDiv = document.getElementById('influenceDisplay');
+            influenceDiv.innerHTML = `<h4>Flags Affecting Position (${px}, ${py})</h4>`;
+            
+            if (flags.length === 0) {
+                influenceDiv.innerHTML += '<p>No flags affect this position</p>';
+                return;
+            }
+            
+            flags.forEach((flag, index) => {
+                const flagInfo = document.createElement('div');
+                flagInfo.className = 'flag-info';
+                const isPrimary = index === 0 ? ' (PRIMARY CONTROLLER)' : '';
+                flagInfo.innerHTML = `
+                    <strong>Flag ${flag.id}${isPrimary}</strong><br>
+                    Owner: ${flag.ownerName}<br>
+                    Distance: ${flag.distance?.toFixed(1)}m<br>
+                    Level: ${flag.level}, Radius: ${flag.radius}m
+                `;
+                influenceDiv.appendChild(flagInfo);
+            });
+        }
+        
+        function displayPlayerPosition(position, affectingFlags) {
+            const flagsDiv = document.getElementById('flagsDisplay');
+            flagsDiv.innerHTML = `<h4>Player Position: (${position.x.toFixed(4)}, ${position.y.toFixed(4)})</h4>`;
+            
+            if (affectingFlags.length > 0) {
+                flagsDiv.innerHTML += `<p><strong>In territory of ${affectingFlags.length} flag(s):</strong></p>`;
+                affectingFlags.forEach(flag => {
+                    const territory = flag.isOwner ? 'YOUR TERRITORY' : 'ENEMY TERRITORY';
+                    const flagInfo = document.createElement('div');
+                    flagInfo.className = 'flag-info';
+                    flagInfo.innerHTML = `
+                        <strong>${territory}</strong><br>
+                        Flag Owner: ${flag.ownerName}<br>
+                        Level: ${flag.level}, Radius: ${flag.radius}m
+                    `;
+                    flagsDiv.appendChild(flagInfo);
+                });
+            } else {
+                flagsDiv.innerHTML += '<p>Not in any territory</p>';
+            }
+        }
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function getCSRFToken() {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'csrftoken') {
+                    return value;
+                }
+            }
+            return '';
+        }
+    </script>
+</body>
+</html>

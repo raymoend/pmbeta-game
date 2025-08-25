@@ -92,10 +92,9 @@ SECURE_HSTS_PRELOAD = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Static files directories
-STATICFILES_DIRS = [
-    BASE_DIR / 'main' / 'static',
-]
+# Static files directories: leave empty; app static is discovered via AppDirectoriesFinder.
+# Adding main/static here duplicates entries and causes collectstatic warnings/ignores.
+STATICFILES_DIRS = []
 
 # Use WhiteNoise for static file serving
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')

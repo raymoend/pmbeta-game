@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    {% load static %}
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PMBeta - Location Game</title>
@@ -107,7 +108,7 @@
         
         .connected { color: #4CAF50; }
         .connecting { color: #FFC107; }
-        .disconnected { color: #F44336; }
+        .disconnected { color: #2196F3; }
         
         /* Custom Mapbox controls */
         .mapboxgl-ctrl-group {
@@ -189,7 +190,7 @@
             <div>Cash: $<span id="cash">{{ player.cash|floatformat:0 }}</span></div>
             <div>Bank: $<span id="bank-money">{{ player.bank_money|floatformat:0 }}</span></div>
             <div>Reputation: <span id="reputation">{{ player.reputation }}</span></div>
-            <div>Heat Level: <span id="heat-level" style="color: #ff4444;">{{ player.heat_level|floatformat:1 }}</span>%</div>
+            <div>Heat Level: <span id="heat-level" style="color: #2196F3;">{{ player.heat_level|floatformat:1 }}</span>%</div>
             <div>HP: <span id="hp">{{ player.hp }}</span>/100</div>
         </div>
         
@@ -208,7 +209,7 @@
                 <div>Flags nearby: <span id="nearby-flags">0</span></div>
             </div>
             <div class="status-item">
-                <div>Zoom: <span id="zoom-level">15</span></div>
+                <div>Zoom: <span id="zoom-level">16</span></div>
             </div>
         </div>
         
@@ -231,7 +232,7 @@
         <div id="flag-build-popup" style="position: absolute; background: rgba(0, 0, 0, 0.95); color: white; padding: 20px; border-radius: 12px; pointer-events: auto; backdrop-filter: blur(15px); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); border: 2px solid #4CAF50; display: none; z-index: 6000; min-width: 350px; max-width: 400px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;">
                 <h3 style="margin: 0; color: #4CAF50;">🏁 Build Territory Flag</h3>
-                <button onclick="closeFlagBuildPopup()" style="background: none; border: none; color: #ff4444; font-size: 20px; cursor: pointer; padding: 0; line-height: 1;">×</button>
+                <button onclick="closeFlagBuildPopup()" style="background: none; border: none; color: #2196F3; font-size: 20px; cursor: pointer; padding: 0; line-height: 1;">×</button>
             </div>
             
             <div id="flag-build-content">
@@ -261,7 +262,7 @@
                     </div>
                 </div>
                 
-                <div id="flag-build-error" style="color: #ff4444; font-size: 12px; margin-bottom: 15px; display: none;"></div>
+                <div id="flag-build-error" style="color: #2196F3; font-size: 12px; margin-bottom: 15px; display: none;"></div>
                 
                 <div style="display: flex; gap: 10px;">
                     <button onclick="buildFlag()" id="build-flag-btn" style="flex: 1; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s;">Build Flag</button>
@@ -279,6 +280,20 @@
         <div id="chat-container">
             <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Press Enter to chat...">
+        </div>
+
+        <!-- Flag Controls Panel -->
+        <div id="flag-panel" style="position:absolute; top:10px; right:10px; background:#111C; color:#fff; padding:8px; display:none; z-index:5; border-radius:6px;">
+          <div>Flag ID: <span class="flag-id">-</span></div>
+          <div>Owner: <span class="flag-owner">-</span></div>
+          <div>Level: <span class="flag-level">-</span></div>
+          <div>Status: <span class="flag-status">-</span></div>
+          <div style="margin-top:6px; display:flex; gap:6px;">
+            <button id="btn-place-flag">Place Flag</button>
+            <button id="btn-attack-flag">Attack</button>
+            <button id="btn-capture-flag">Capture</button>
+            <button id="btn-collect-flag">Collect</button>
+          </div>
         </div>
     </div>
 
@@ -309,6 +324,7 @@
             reputation: {{ player.reputation }},
             heat_level: {{ player.heat_level }}
         };
+        const CURRENT_USER_ID = {{ request.user.id|default:'null' }};
 
         // Initialize Mapbox map
         function initMap() {
@@ -461,7 +477,7 @@
                 <div style="
                     width: 32px;
                     height: 32px;
-                    background-color: #FF4444;
+                    background-color: #2196F3;
                     border: 3px solid #FFFFFF;
                     border-radius: 50%;
                     display: flex;
@@ -499,7 +515,7 @@
                         ],
                         base: 2
                     },
-                    'circle-color': '#FF4444',
+                    'circle-color': '#2196F3',
                     'circle-opacity': 0.1
                 }
             });
@@ -517,9 +533,9 @@
                         ],
                         base: 2
                     },
-                    'circle-color': '#FF4444',
+                    'circle-color': '#2196F3',
                     'circle-opacity': 0,
-                    'circle-stroke-color': '#FF4444',
+                    'circle-stroke-color': '#2196F3',
                     'circle-stroke-width': 2,
                     'circle-stroke-opacity': 0.8
                 }
@@ -572,11 +588,15 @@
                     type: 'line',
                     source: 'grid',
                     paint: {
-                        'line-color': '#888888',
+                        'line-color': '#6b6b6b',
                         'line-width': 1,
-                        'line-opacity': 0.3
+                        'line-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.15, 16, 0.05]
                     }
                 });
+            } else {
+                map.setPaintProperty('grid-lines', 'line-color', '#6b6b6b');
+                map.setPaintProperty('grid-lines', 'line-width', 1);
+                map.setPaintProperty('grid-lines', 'line-opacity', ['interpolate', ['linear'], ['zoom'], 12, 0.15, 16, 0.05]);
             }
         }
         
@@ -931,7 +951,7 @@
                         0, 5,
                         1, 30
                     ],
-                    'circle-color': '#FF4444',
+                    'circle-color': '#2196F3',
                     'circle-opacity': [
                         'interpolate',
                         ['linear'],
@@ -1129,7 +1149,7 @@
                     1: { icon: '🌳', color: '#4CAF50' }, // Tree
                     2: { icon: '🪨', color: '#795548' }, // Rock
                     3: { icon: '🏠', color: '#2196F3' }, // Building
-                    4: { icon: '🚩', color: '#F44336' }, // Flag
+                    4: { icon: '🚩', color: '#2196F3' }, // Flag
                     5: { icon: '🏛️', color: '#9C27B0' }  // City
                 };
                 
@@ -1366,7 +1386,7 @@
                         icon: '⚔️',
                         title: `Attack ${flag.name}`,
                         subtitle: `Owned by ${flag.owner}`,
-                        color: '#F44336',
+                        color: '#2196F3',
                         action: `attackFlagAction('${flag.id}'); hideContextMenu();`
                     });
                 } else {
@@ -1388,7 +1408,7 @@
                         icon: '🚩',
                         title: 'Place Flag',
                         subtitle: 'Cost: $50,000',
-                        color: '#FF4444',
+                        color: '#2196F3',
                         action: `showFlagPlacementDialog(${coords.lat}, ${coords.lon}); hideContextMenu();`
                     });
                 } else {
@@ -1434,19 +1454,34 @@
             return currentPlayer.cash >= 50000; // Has enough money
         }
         
-        // Get resource icon
+        // Simple SVG data URI generator for glyph-based placeholders
+        function svgDataUri(bgColor, glyph) {
+            const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'>
+  <rect x='0' y='0' width='100%' height='100%' rx='6' ry='6' fill='${bgColor}' />
+  <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-size='18'>${glyph}</text>
+</svg>`;
+            return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+        }
+
+        // Get resource icon (as an <img> with a data-URI placeholder)
         function getResourceIcon(resourceType) {
-            const icons = {
-                'tree': '🌳',
-                'iron_mine': '⛏️',
-                'gold_mine': '🪙',
-                'stone_quarry': '🪨',
-                'herb_patch': '🌿',
-                'ruins': '🏛️',
-                'cave': '🕳️',
-                'well': '🌊'
-            };
-            return icons[resourceType] || '📦';
+            const type = String(resourceType || '').toLowerCase();
+            let glyph = '📦';
+            let color = '#616161';
+            switch (type) {
+                case 'tree': glyph = '🌳'; color = '#2e7d32'; break;
+                case 'iron_mine': glyph = '⛏️'; color = '#455a64'; break;
+                case 'gold_mine': glyph = '🪙'; color = '#f9a825'; break;
+                case 'stone_quarry': glyph = '🪨'; color = '#6d4c41'; break;
+                case 'herb_patch': glyph = '🌿'; color = '#388e3c'; break;
+                case 'berry_bush': glyph = '🍓'; color = '#8bc34a'; break;
+                case 'ruins': glyph = '🏛️'; color = '#5d4037'; break;
+                case 'cave': glyph = '🕳️'; color = '#37474f'; break;
+                case 'well': glyph = '💧'; color = '#1e88e5'; break;
+                case 'farm': glyph = '🌾'; color = '#fbc02d'; break;
+            }
+            const uri = svgDataUri(color, glyph);
+            return `<img src="${uri}" alt="${type || 'resource'}" style="width:18px;height:18px;" />`;
         }
         
         // ===============================
@@ -1486,6 +1521,41 @@
             });
         }
         
+        // Terrains/territory helpers (P2K feel)
+        function circlePolygon(lon, lat, radiusMeters, steps=60) {
+            const R = 6378137;
+            const d = radiusMeters / R;
+            const phi1 = lat * Math.PI/180;
+            const lam1 = lon * Math.PI/180;
+            const coords = [];
+            for (let i=0; i<=steps; i++) {
+                const brng = 2*Math.PI * i/steps;
+                const phi2 = Math.asin(Math.sin(phi1)*Math.cos(d) + Math.cos(phi1)*Math.sin(d)*Math.cos(brng));
+                const lam2 = lam1 + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(phi1), Math.cos(d)-Math.sin(phi1)*Math.sin(phi2));
+                coords.push([lam2*180/Math.PI, phi2*180/Math.PI]);
+            }
+            return { type: "Polygon", coordinates: [coords] };
+        }
+        function flagRadiusForLevel(level) {
+            // Unified to match hex overlay size
+            return 650;
+        }
+        function buildTerritoryGeo(flags) {
+            const features = (flags || []).map(f => {
+                const r = flagRadiusForLevel(f.level || 1);
+                return {
+                    type: "Feature",
+                    geometry: circlePolygon(f.lon, f.lat, r),
+                    properties: {
+                        id: f.id,
+                        owner_id: f.owner_id,
+                        status: f.status || "active"
+                    }
+                };
+            });
+            return { type: "FeatureCollection", features };
+        }
+
         // Display flags on map
         function displayFlags(flags) {
             // Clear existing flag markers
@@ -1496,6 +1566,46 @@
                 createFlagMarker(flag);
                 gameEntities[flag.id] = flag; // Store for context menu
             });
+
+            // Render territories (polygons) beneath markers
+            const terrSrc = "territories_source";
+            const terrFill = "territories_fill";
+            const terrGlow = "territories_glow";
+            const terrData = buildTerritoryGeo(flags);
+            if (map.getSource(terrSrc)) {
+                map.getSource(terrSrc).setData(terrData);
+            } else {
+                map.addSource(terrSrc, { type: "geojson", data: terrData });
+                map.addLayer({
+                    id: terrFill,
+                    type: "fill",
+                    source: terrSrc,
+                    paint: {
+                        "fill-color": ["case",
+                            ["==", ["get","status"], "capturable"], "#f1c40f",
+                            ["==", ["get","owner_id"], CURRENT_USER_ID], "#2ecc71",
+                            "#e74c3c"
+                        ],
+                        "fill-opacity": 0.12
+                    },
+                    minzoom: 12
+                });
+                map.addLayer({
+                    id: terrGlow,
+                    type: "line",
+                    source: terrSrc,
+                    paint: {
+                        "line-color": ["case",
+                            ["==", ["get","status"], "capturable"], "#f1c40f",
+                            ["==", ["get","owner_id"], CURRENT_USER_ID], "#2ecc71",
+                            "#e74c3c"
+                        ],
+                        "line-width": 2,
+                        "line-opacity": 0.25
+                    },
+                    minzoom: 13.5
+                });
+            }
         }
         
         // Create flag marker
@@ -1652,7 +1762,7 @@
             }[flag.status] || '#999';
             
             content.innerHTML = `
-                <h3 style="margin: 0 0 10px 0; color: #ff4444;">🏴 ${flag.name}</h3>
+                <h3 style="margin: 0 0 10px 0; color: #2196F3;">🏴 ${flag.name}</h3>
                 <div><strong>Owner:</strong> ${flag.owner}</div>
                 <div><strong>Family:</strong> ${flag.controlling_family || 'Independent'}</div>
                 <div><strong>Type:</strong> ${flag.flag_type.charAt(0).toUpperCase() + flag.flag_type.slice(1)}</div>
@@ -1840,12 +1950,30 @@
             });
         }
         
+        // NPC placeholder icon as data-URI
+        function getNPCIconUrl(npc) {
+            const name = String(npc?.name || '').toLowerCase();
+            const type = String(npc?.npc_type || '').toLowerCase();
+            const alive = !!npc?.is_alive;
+            let glyph = '👤';
+            let color = alive ? '#FF5722' : '#757575';
+            if (/wolf/.test(name) || /wolf/.test(type)) glyph = '🐺';
+            else if (/bear/.test(name) || /bear/.test(type)) glyph = '🐻';
+            else if (/goblin|troll|orc/.test(name) || /goblin|troll|orc/.test(type)) glyph = '👹';
+            else if (/skeleton/.test(name) || /skeleton/.test(type)) glyph = '💀';
+            else if (/zombie|undead/.test(name) || /zombie|undead/.test(type)) glyph = '🧟';
+            else if (/dragon/.test(name) || /dragon/.test(type)) glyph = '🐲';
+            else if (/merchant|trader/.test(name) || /merchant|trader/.test(type)) glyph = '🧑‍🌾';
+            return svgDataUri(color, glyph);
+        }
+
         // Create NPC marker
         function createNPCMarker(npc) {
             const color = npc.is_alive ? '#FF5722' : '#757575';
             
             // Extract first two letters of NPC name for display
             const nameInitials = npc.name ? npc.name.substring(0, 2).toUpperCase() : 'NP';
+            const iconUrl = getNPCIconUrl(npc);
             
             const el = document.createElement('div');
             el.className = 'npc-marker';
@@ -1871,7 +1999,7 @@
                     ${!npc.is_alive ? 'opacity: 0.5; filter: grayscale(50%);' : ''}
                     ${npc.is_alive ? 'animation: subtlePulse 3s infinite ease-in-out;' : ''}
                 ">
-                    ${nameInitials}
+                    <img src="${iconUrl}" alt="${(npc.name || 'NPC').toString().replace(/\"/g,'&quot;')}" style="width:24px;height:24px;" />
                     ${npc.is_alive ? '<div style="position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; background: #4CAF50; border: 1px solid white; border-radius: 50%; box-shadow: 0 0 4px rgba(76, 175, 80, 0.6);"></div>' : ''}
                 </div>
             `;
@@ -2302,7 +2430,7 @@
                 statusDiv.innerHTML = '<span style="color: #4CAF50;">✓ Good location for flag</span>';
                 document.getElementById('build-flag-btn').disabled = false;
             } else {
-                statusDiv.innerHTML = `<span style="color: #ff4444;">✗ ${canBuild.reason}</span>`;
+                statusDiv.innerHTML = `<span style="color: #2196F3;">✗ ${canBuild.reason}</span>`;
                 document.getElementById('build-flag-btn').disabled = true;
             }
             
@@ -2546,12 +2674,37 @@
         document.addEventListener('DOMContentLoaded', function() {
             console.log('PMBeta initialized');
             initMap(); // Start the game
+
+            // Ensure map resizes on layout changes
+            window.addEventListener('resize', () => { try { if (map && map.resize) map.resize(); } catch(e) {} });
+            setTimeout(() => { try { if (map && map.resize) map.resize(); } catch(e) {} }, 150);
             
             // Load all game entities after map loads
             setTimeout(() => {
                 loadGameEntities();
-            }, 2000);
+            }, 1200);
         });
-    </script>
+</script>
+<script src="{% static 'main/js/flags.js' %}"></script>
+<script>
+  (function initFlagsWhenReady(){
+    var tries = 0;
+    function ready(){
+      return typeof window !== 'undefined' && window.map && (window.worldSocket || window.gameSocket);
+    }
+    function go(){
+      try{
+        var sock = window.worldSocket || window.gameSocket;
+        var uid = {{ request.user.id|default:'null' }};
+        if (uid && window.initFlagsUI && window.map && sock){
+          window.initFlagsUI(window.map, sock, uid);
+          return;
+        }
+      }catch(e){}
+      if (++tries < 100){ setTimeout(go, 300); }
+    }
+    if (ready()) go(); else setTimeout(go, 500);
+  })();
+</script>
 </body>
 </html>

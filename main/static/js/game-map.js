@@ -18,6 +18,12 @@ class GameMap {
         this.lastMoveTime = 0;
         this.moveThrottle = 1000; // 1 second between moves
         
+        this.territories = [];
+        this.currentTerritoryId = null;
+        this.territorySourceId = 'territory-circles-source';
+        this.territoryLayerId = 'territory-core-fill';
+        this.movementLayerId = 'territory-move-fill';
+
         this.init();
     }
     
@@ -34,7 +40,7 @@ class GameMap {
             container: this.container,
             style: 'mapbox://styles/mapbox/dark-v11', // Dark fantasy theme
             center: [this.character.lon || -74.5, this.character.lat || 40],
-            zoom: 15,
+            zoom: 16,
             pitch: 45,
             bearing: -17.6,
             antialias: true
@@ -45,6 +51,7 @@ class GameMap {
             this.setupMapFeatures();
             this.setupEventListeners();
             this.addCharacterMarker();
+            this.loadTerritories();
             this.loadNearbyEntities();
         });
         
@@ -103,7 +110,123 @@ class GameMap {
             }, labelLayerId);
         });
     }
-    
+
+    // --- Territory helpers ---
+    geodesicCircle(lng, lat, radiusMeters, steps = 64) {
+        const coords = [];
+        const R = 6371000;
+        for (let i = 0; i <= steps; i++) {
+            const bearing = (i / steps) * 2 * Math.PI;
+            const φ1 = lat * Math.PI / 180;
+            const λ1 = lng * Math.PI / 180;
+            const δ = radiusMeters / R;
+            const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(bearing));
+            const λ2 = λ1 + Math.atan2(Math.sin(bearing) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+            coords.push([λ2 * 180 / Math.PI, φ2 * 180 / Math.PI]);
+        }
+        return coords;
+    }
+
+    territoryConfig() {
+        return {
+            TERRITORY_RADIUS_M: 650, // match hex overlay size
+            MOVEMENT_RADIUS_M: 800,
+        };
+    }
+
+    territoriesGeoJSON() {
+        const cfg = this.territoryConfig();
+        const features = [];
+        for (const t of this.territories) {
+            const lng = t.position?.x ?? 0;
+            const lat = t.position?.y ?? 0;
+            // core
+            features.push({
+                type: 'Feature',
+                properties: { type: 'core', id: t.id },
+                geometry: { type: 'Polygon', coordinates: [this.geodesicCircle(lng, lat, cfg.TERRITORY_RADIUS_M)] }
+            });
+            // movement
+            features.push({
+                type: 'Feature',
+                properties: { type: 'move', id: t.id },
+                geometry: { type: 'Polygon', coordinates: [this.geodesicCircle(lng, lat, cfg.MOVEMENT_RADIUS_M)] }
+            });
+        }
+        return { type: 'FeatureCollection', features };
+    }
+
+    renderTerritoryLayers() {
+        const sourceId = this.territorySourceId;
+        const coreLayer = this.territoryLayerId;
+        const moveLayer = this.movementLayerId;
+        const data = this.territoriesGeoJSON();
+        if (this.map.getSource(sourceId)) {
+            this.map.getSource(sourceId).setData(data);
+            return;
+        }
+        this.map.addSource(sourceId, { type: 'geojson', data });
+        this.map.addLayer({
+            id: coreLayer,
+            type: 'fill',
+            source: sourceId,
+            filter: ['==', ['get', 'type'], 'core'],
+            paint: { 'fill-color': '#2196F3', 'fill-opacity': 0.15 }
+        });
+        this.map.addLayer({
+            id: moveLayer,
+            type: 'line',
+            source: sourceId,
+            filter: ['==', ['get', 'type'], 'move'],
+            paint: { 'line-color': '#FF9800', 'line-width': 2, 'line-dasharray': [2, 2] }
+        });
+    }
+
+    addFlagMarker(territory) {
+        const el = document.createElement('div');
+        el.className = 'flag-marker';
+        el.innerHTML = `<div class="marker-icon flag-icon"><i class="fas fa-flag"></i></div><div class="marker-label">${territory.name || 'Flag'}</div>`;
+        el.addEventListener('click', async () => {
+            try {
+                const res = await this.api.travelToTerritory(territory.id);
+                if (res.success) {
+                    this.currentTerritoryId = territory.id;
+                    const { lat, lon } = res.new_position || {};
+                    if (typeof lat === 'number' && typeof lon === 'number') {
+                        this.updateCharacterPosition(lat, lon);
+                        this.character.lat = lat; this.character.lon = lon;
+                        this.centerOnCharacter();
+                        this.showNotification(`Traveled to ${territory.name}`, 'success');
+                        // reload territories in new area
+                        this.loadTerritories();
+                        this.loadNearbyEntities();
+                    }
+                } else {
+                    this.showNotification(res.error || 'Travel failed', 'error');
+                }
+            } catch (e) {
+                console.error('Travel failed', e);
+                this.showNotification('Travel failed', 'error');
+            }
+        });
+        new mapboxgl.Marker(el).setLngLat([territory.position.x, territory.position.y]).addTo(this.map);
+    }
+
+    async loadTerritories() {
+        try {
+            const res = await this.api.getTerritories();
+            if (res && res.success) {
+                this.territories = Array.isArray(res.territories) ? res.territories : [];
+                // render markers
+                this.territories.forEach(t => this.addFlagMarker(t));
+                // render circles
+                this.renderTerritoryLayers();
+            }
+        } catch (e) {
+            console.warn('Failed to load territories', e);
+        }
+    }
+
     setupEventListeners() {
         // Handle map clicks for movement
         this.map.on('click', (e) => {
@@ -346,7 +469,7 @@ class GameMap {
         if (this.character.lat && this.character.lon) {
             this.map.flyTo({
                 center: [this.character.lon, this.character.lat],
-                zoom: 15,
+                zoom: 16,
                 duration: 1000
             });
         }

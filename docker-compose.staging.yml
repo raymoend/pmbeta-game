@@ -1,0 +1,44 @@
+version: '3.9'
+services:
+  web:
+    build: .
+    image: pmbeta-web:staging
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/pmbeta
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      DEBUG: 'False'
+      DJANGO_SETTINGS_MODULE: pmbeta.settings
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: pmbeta
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+
+  flag_scheduler:
+    image: pmbeta-web:staging
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/pmbeta
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      DEBUG: 'False'
+      DJANGO_SETTINGS_MODULE: pmbeta.settings
+    command: ["python", "manage.py", "process_flags", "--loop", "--interval", "60"]
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  pgdata:

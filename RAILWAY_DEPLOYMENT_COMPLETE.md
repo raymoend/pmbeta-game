@@ -17,7 +17,7 @@ Copy these to your Railway project's environment variables:
 
 ```bash
 # Core Django Settings
-DJANGO_SETTINGS_MODULE=pmbeta.settings_production
+DJANGO_SETTINGS_MODULE=pmbeta.settings
 SECRET_KEY=(-&7j3zoor0g13+q&owifzw1y1x+!7zo#6+3^ix9@bf0*zv)(t
 DEBUG=False
 RAILWAY_ENVIRONMENT=production

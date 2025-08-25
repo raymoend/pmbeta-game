@@ -1,0 +1,77 @@
+{% endblock %}
+
+{% block extra_js %}
+<script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Character data from Django context
+    const character = {
+        id: '{{ character.id }}',
+        name: '{{ character.name }}',
+        level: {{ character.level }},
+        gold: {{ character.gold }},
+        lat: {{ character.lat }},
+        lon: {{ character.lon }}
+    };
+    
+    // Initialize MapBox
+    mapboxgl.accessToken = '{{ MAPBOX_ACCESS_TOKEN }}';
+    
+    let worldMap, territoryMap, territoryManager;
+    
+    // Navigation system
+    const navTabs = document.querySelectorAll('.pk-nav-tab');
+    const contentPanels = document.querySelectorAll('.pk-content-panel');
+    
+    navTabs.forEach(tab => {
+        tab.addEventListener('click', function(e) {
+            e.preventDefault();
+            const panelId = this.dataset.panel;
+            switchPanel(panelId);
+        });
+    });
+    
+    function switchPanel(panelId) {
+        // Update active tab
+        navTabs.forEach(tab => tab.classList.remove('active'));
+        document.querySelector([data-panel=""]).classList.add('active');
+        
+        // Update active panel
+        contentPanels.forEach(panel => panel.classList.remove('active'));
+        document.getElementById(panel-).classList.add('active');
+        
+        // Initialize panel content if needed
+        switch(panelId) {
+            case 'world':
+                initWorldMap();
+                break;
+            case 'territories':
+                break;
+        }
+    }
+    
+    function initWorldMap() {
+        if (worldMap) return; // Already initialized
+        
+        worldMap = new mapboxgl.Map({
+            container: 'pk-map',
+            style: 'mapbox://styles/mapbox/dark-v11',
+            center: [character.lon, character.lat],
+            zoom: 15,
+            minZoom: 15,
+            maxZoom: 18,
+            pitch: 0,
+            bearing: 0
+        });
+        
+        worldMap.on('load', function() {
+            document.getElementById('map-loading').style.display = 'none';
+        });
+    }
+    
+    // Initialize with world map
+    switchPanel('world');
+});
+</script>
+{% endblock %}

@@ -19,6 +19,14 @@ PMBeta is a sophisticated multiplayer location-based mafia game built with Djang
 
 ## Quick Deployment Options
 
+Additionally, for local staging with Docker, use docker-compose.staging.yml which includes Postgres, Redis, the web app (Daphne), and a scheduler service running `manage.py process_flags --loop` every 60 seconds.
+
+Quick start (staging locally):
+
+1. docker compose -f docker-compose.staging.yml build
+2. docker compose -f docker-compose.staging.yml up -d
+3. Visit http://localhost:8000
+
 ### 1. Railway (Recommended)
 
 Railway provides excellent support for Django + WebSocket + Redis deployments.

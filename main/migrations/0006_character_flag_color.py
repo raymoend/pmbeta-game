@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('main', '0005_create_territory_flag_system'),
+        ('main', '0004_buildingtype_flagcolor_buildingtemplate_and_more'),
     ]
 
     operations = [

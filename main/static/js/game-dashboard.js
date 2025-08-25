@@ -91,6 +91,9 @@ class GameDashboard {
         this.websocket.addEventListener('connected', () => {
             this.updateConnectionStatus('connected');
             this.showNotification('Connected to The Shattered Realm', 'success');
+            // On connect, ask for fresh inventory and stats
+            try { this.websocket.requestInventory(); } catch (_) {}
+            try { this.websocket.requestCharacterStats(); } catch (_) {}
         });
         
         this.websocket.addEventListener('disconnected', () => {
@@ -139,6 +142,17 @@ class GameDashboard {
         
         this.websocket.addEventListener('notification', (data) => {
             this.showNotification(data.message, data.type || 'info');
+        });
+
+        // Inventory updates
+        this.websocket.addEventListener('inventory_update', (data) => {
+            const normalized = this.normalizeInventoryPayload({ type: 'inventory_update', data });
+            this.applyInventoryPayload(normalized.inventory);
+        });
+
+        // When a trade responds, refresh inventory via WS
+        this.websocket.addEventListener('trade_response', () => {
+            try { this.websocket.requestInventory(); } catch (_) {}
         });
     }
     
@@ -270,12 +284,10 @@ class GameDashboard {
                 }
             }
             
-            // Load inventory
-            const inventory = await this.api.getInventory();
-            if (inventory.success) {
-                this.inventory = inventory.items || [];
-                this.updateInventoryDisplay();
-            }
+            // Load inventory (API returns { items, total_weight, max_capacity, gold })
+            const inv = await this.api.getInventory();
+            const normalized = this.normalizeInventoryPayload({ type: 'inventory_init', data: inv });
+            this.applyInventoryPayload(normalized.inventory);
             
         } catch (error) {
             console.error('Failed to load initial data:', error);
@@ -628,28 +640,39 @@ class GameDashboard {
         const inventoryGrid = document.getElementById('inventory-grid');
         if (!inventoryGrid) return;
         
-        if (this.inventory.length === 0) {
+        if (!Array.isArray(this.inventory) || this.inventory.length === 0) {
             inventoryGrid.innerHTML = '<div class="empty-inventory">No items in inventory</div>';
-            return;
+        } else {
+            inventoryGrid.innerHTML = this.inventory.map(item => {
+                const iconUrl = item.icon || this.getPlaceholderIcon(item.type, item.name);
+                const qty = item.quantity ?? item.qty ?? 1;
+                const safeName = item.name || 'Item';
+                return `
+                    <div class="inventory-item" data-item-id="${item.id}">
+                        <div class="item-icon-img">
+                            <img src="${iconUrl}" alt="${safeName}" />
+                        </div>
+                        <div class="item-info">
+                            <div class="item-name">${safeName}</div>
+                            <div class="item-quantity">x${qty}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
         }
         
-        inventoryGrid.innerHTML = this.inventory.map(item => `
-            <div class="inventory-item" data-item-id="${item.id}">
-                <div class="item-icon">
-                    <i class="fas fa-${this.getItemIcon(item.type)}"></i>
-                </div>
-                <div class="item-info">
-                    <div class="item-name">${item.name}</div>
-                    <div class="item-quantity">x${item.quantity}</div>
-                </div>
-            </div>
-        `).join('');
-        
-        // Update weight display
-        const totalWeight = this.inventory.reduce((sum, item) => sum + (item.weight * item.quantity), 0);
+        // Update weight/capacity
         const weightEl = document.getElementById('inventory-weight');
         if (weightEl) {
-            weightEl.textContent = `${totalWeight}/50`;
+            const tw = this.inventoryWeight ?? this.inventory?.reduce((sum, it) => sum + (it.quantity || it.qty || 1), 0) ?? 0;
+            const cap = this.inventoryCapacity ?? 50;
+            weightEl.textContent = `${tw}/${cap}`;
+        }
+        
+        // Optional: update coins if present
+        const coinsEl = document.getElementById('inventory-coins');
+        if (coinsEl && typeof this.inventoryGold === 'number') {
+            coinsEl.textContent = String(this.inventoryGold);
         }
     }
     
@@ -663,6 +686,62 @@ class GameDashboard {
             misc: 'box'
         };
         return icons[itemType] || 'box';
+    }
+
+    // Normalize various inventory payload shapes to a canonical structure
+    normalizeInventoryPayload(msg) {
+        const raw = msg?.data || msg || {};
+        // Accept top-level: { items, total_weight, max_capacity, gold } or { inventory: { ... } }
+        const inv = raw.inventory || raw;
+        const items = Array.isArray(inv.items) ? inv.items : (Array.isArray(raw.items) ? raw.items : []);
+        const normItems = items.map(it => ({
+            id: it.id ?? it.item_id ?? it.pk ?? null,
+            name: it.name ?? it.title ?? 'Item',
+            type: it.type ?? it.item_type ?? it.category ?? 'misc',
+            quantity: it.quantity ?? it.qty ?? it.count ?? 1,
+            icon: it.icon ?? it.icon_url ?? it.image ?? it.image_url ?? null,
+        }));
+        return {
+            inventory: {
+                items: normItems,
+                total_weight: inv.total_weight ?? inv.weight ?? 0,
+                max_capacity: inv.max_capacity ?? inv.capacity ?? 50,
+                gold: inv.gold ?? inv.coins ?? 0,
+            }
+        };
+    }
+
+    applyInventoryPayload(inv) {
+        // inv is shape { items, total_weight, max_capacity, gold }
+        this.inventory = inv.items || [];
+        this.inventoryWeight = inv.total_weight ?? 0;
+        this.inventoryCapacity = inv.max_capacity ?? 50;
+        this.inventoryGold = inv.gold ?? this.inventoryGold;
+        this.updateInventoryDisplay();
+    }
+
+    // Provide placeholder icons for known item types/names
+    getPlaceholderIcon(itemType, itemName = '') {
+        const name = (itemName || '').toLowerCase();
+        // Simple berry example and generic NPC/resource placeholders as data URIs
+        if (name.includes('berry') || name.includes('berries')) {
+            return this.svgDataUri('#8bc34a', '🍓');
+        }
+        if (itemType === 'potion') return this.svgDataUri('#9c27b0', '🧪');
+        if (itemType === 'food') return this.svgDataUri('#ff9800', '🍖');
+        if (itemType === 'material') return this.svgDataUri('#607d8b', '🧱');
+        if (itemType === 'weapon') return this.svgDataUri('#e91e63', '⚔️');
+        if (itemType === 'armor') return this.svgDataUri('#03a9f4', '🛡️');
+        // fallback generic box
+        return this.svgDataUri('#616161', '📦');
+    }
+
+    svgDataUri(bgColor, glyph) {
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>
+  <rect x='0' y='0' width='100%' height='100%' rx='10' ry='10' fill='${bgColor}' />
+  <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-size='42'>${glyph}</text>
+</svg>`;
+        return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
     }
     
     updateConnectionStatus(status) {

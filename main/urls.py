@@ -2,7 +2,7 @@
 Legacy URL patterns for main app
 The main RPG system URLs are in urls_rpg.py
 """
-from django.urls import path
+from django.urls import path, include
 from django.contrib.auth import views as auth_views
 from . import views
 from . import views_resources
@@ -11,6 +11,7 @@ urlpatterns = [
     # Main pages
     path('', views.index, name='legacy_index'),
     path('game/', views.game, name='legacy_game'),
+    path('java-client/', views.java_style_client, name='java_style_client'),
     
     # Authentication
     path('register/', views.register, name='legacy_register'),
@@ -39,4 +40,11 @@ urlpatterns = [
     path('api/player/move/', views.api_player_move, name='api_player_move'),
     path('api/resources/collect/<uuid:resource_id>/', views.api_collect_resource, name='api_collect_resource'),
     path('api/resources/check-spawn/', views.api_check_resource_spawn, name='api_check_resource_spawn'),
+    
+    # Flags (PR2 basic endpoints)
+    path('api/flags/place/', views.api_flags_place, name='api_flags_place'),
+    path('api/flags/nearby/', views.api_flags_nearby, name='api_flags_nearby'),
+    path('api/flags/attack/<uuid:flag_id>/', views.api_flags_attack, name='api_flags_attack'),
+    path('api/flags/capture/\u003cuuid:flag_id\u003e/', views.api_flags_capture, name='api_flags_capture'),
+    path('api/flags/collect/\u003cuuid:flag_id\u003e/', views.api_flags_collect, name='api_flags_collect'),
 ]
