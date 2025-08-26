@@ -50,7 +50,7 @@ urlpatterns = [
     path('healthz/', health, name='healthz_root'),
     path('livez/', health, name='livez'),
     path('readyz/', health, name='readyz'),
-    re_path(r'^(health|healthz|livez|readyz)$', health),
+    re_path(r'^(?:health|healthz|livez|readyz)/?$', health),
     path('debug/runtime/', runtime_debug, name='runtime_debug'),
 
     # Auth (logout via simple view allowing GET/POST for dev convenience)
@@ -63,6 +63,9 @@ urlpatterns = [
 
     # Flag API
     path('api/', include('main.flag_urls')),
+
+    # Convenience alias for legacy stats endpoint at root
+    path('api/stats/', views.api_game_stats, name='api_game_stats_root'),
     
     # PK Movement and Resource API (temporary - until PK models are fixed)
     path('api/player/move/', views.api_player_move, name='api_player_move_root'),
