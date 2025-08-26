@@ -4,8 +4,8 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python manage.py collectstatic --noinput || true && daphne -b 0.0.0.0 -p $PORT pmbeta.asgi:application",
-    "healthcheckPath": "/health",
+    "startCommand": "daphne -b 0.0.0.0 -p $PORT pmbeta.asgi:application",
+    "healthcheckPath": "/",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
