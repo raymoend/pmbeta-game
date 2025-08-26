@@ -14,6 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Wrap daphne so it resolves $PORT even when Start Command is executed without a shell
+RUN if [ -x /usr/local/bin/daphne ]; then mv /usr/local/bin/daphne /usr/local/bin/daphne.orig; fi \
+    && printf '%s\n' '#!/bin/sh' 'PORT="${PORT:-8000}"' 'HOST="${HOST:-0.0.0.0}"' 'APP="${ASGI_APP:-pmbeta.asgi:application}"' 'exec /usr/local/bin/daphne.orig -b "$HOST" -p "$PORT" "$APP"' > /usr/local/bin/daphne \
+    && chmod +x /usr/local/bin/daphne
+
 COPY . .
 
 # Collect static files (ignore errors if none)
