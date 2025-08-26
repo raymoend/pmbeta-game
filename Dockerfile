@@ -29,10 +29,9 @@ ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production RAILWA
 RUN printf '%s\n' '#!/bin/sh' 'cmd="$*"' 'exec sh -lc "export $cmd"' > /usr/local/bin/export \
     && chmod +x /usr/local/bin/export
 
-# Use a shell entrypoint so platform Start Command overrides that use shell builtins (e.g., `export`) work.
-ENTRYPOINT ["sh", "-lc"]
+# Robust entrypoint: start via Python script that reads $PORT and execs Daphne.
+# This works even when the platform does not use a shell (so "$PORT" wouldn't expand).
+ENTRYPOINT ["python", "start_daphne.py"]
 
-# Default start command (used when no Start Command override is set)
-# Do not run migrations here to avoid startup healthcheck timeouts.
-# Run migrations as a one-off job in Railway after deploy instead.
-CMD ["daphne -b 0.0.0.0 -p ${PORT:-8000} pmbeta.asgi:application"]
+# Any command provided by the platform will be passed as args and ignored by the launcher.
+CMD [""]
