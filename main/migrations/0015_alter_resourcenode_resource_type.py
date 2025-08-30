@@ -3,6 +3,51 @@
 from django.db import migrations, models
 
 
+def safe_cleanup_legacy_tables(apps, schema_editor):
+    """Safely remove orphaned rows from legacy PK tables if they exist.
+    This guards against missing tables on fresh databases (e.g., Railway Postgres)
+    where the legacy PK tables were never created.
+    """
+    conn = schema_editor.connection
+    existing = set(conn.introspection.table_names())
+
+    # Helper to execute SQL safely
+    def exec_sql(sql: str):
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+
+    # 1) Remove orphaned zones that point to non-existent flags
+    if 'pk_territory_zones' in existing and 'pk_territory_flags' in existing:
+        try:
+            exec_sql(
+                "DELETE FROM pk_territory_zones "
+                "WHERE flag_id NOT IN (SELECT id FROM pk_territory_flags)"
+            )
+        except Exception:
+            # Ignore cleanup failures; they are non-critical
+            pass
+
+    # 2) Remove flags that point to non-existent characters (legacy schema)
+    if 'pk_territory_flags' in existing and 'rpg_characters' in existing:
+        try:
+            exec_sql(
+                "DELETE FROM pk_territory_flags "
+                "WHERE owner_id NOT IN (SELECT id FROM rpg_characters)"
+            )
+        except Exception:
+            pass
+
+    # 3) Remove any zones that now became orphaned after deleting invalid flags
+    if 'pk_territory_zones' in existing and 'pk_territory_flags' in existing:
+        try:
+            exec_sql(
+                "DELETE FROM pk_territory_zones "
+                "WHERE flag_id NOT IN (SELECT id FROM pk_territory_flags)"
+            )
+        except Exception:
+            pass
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,31 +55,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Cleanup legacy PK table rows with broken FKs that can cause SQLite constraint checks to fail
-        # 1) Remove orphaned zones that point to non-existent flags
-        migrations.RunSQL(
-            sql=(
-                "DELETE FROM pk_territory_zones "
-                "WHERE flag_id NOT IN (SELECT id FROM pk_territory_flags)"
-            ),
-            reverse_sql=migrations.RunSQL.noop,
-        ),
-        # 2) Remove flags that point to non-existent characters (legacy schema)
-        migrations.RunSQL(
-            sql=(
-                "DELETE FROM pk_territory_flags "
-                "WHERE owner_id NOT IN (SELECT id FROM rpg_characters)"
-            ),
-            reverse_sql=migrations.RunSQL.noop,
-        ),
-        # 3) Remove any zones that now became orphaned after deleting invalid flags
-        migrations.RunSQL(
-            sql=(
-                "DELETE FROM pk_territory_zones "
-                "WHERE flag_id NOT IN (SELECT id FROM pk_territory_flags)"
-            ),
-            reverse_sql=migrations.RunSQL.noop,
-        ),
+        # Cleanup legacy PK table rows with broken FKs, but only if tables exist
+        migrations.RunPython(safe_cleanup_legacy_tables, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='resourcenode',
             name='resource_type',
