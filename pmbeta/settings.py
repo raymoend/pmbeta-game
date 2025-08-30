@@ -278,9 +278,12 @@ if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
             }
         }
         
-        # Use Redis sessions
-        SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-        SESSION_CACHE_ALIAS = 'default'
+        # Sessions: default to DB-backed to avoid auth failures if Redis creds are wrong
+        if os.environ.get('USE_REDIS_SESSIONS', 'false').lower() == 'true':
+            SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+            SESSION_CACHE_ALIAS = 'default'
+        else:
+            SESSION_ENGINE = 'django.contrib.sessions.backends.db'
     else:
         # Fallback configurations when Redis not available
         CHANNEL_LAYERS = {
@@ -303,7 +306,7 @@ else:
                 },
             },
         }
-        # Use Redis for caching and sessions when available
+        # Use Redis for caching (sessions optional)
         CACHES = {
             'default': {
                 'BACKEND': 'django_redis.cache.RedisCache',
@@ -313,8 +316,11 @@ else:
                 }
             }
         }
-        SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-        SESSION_CACHE_ALIAS = 'default'
+        if os.environ.get('USE_REDIS_SESSIONS', 'false').lower() == 'true':
+            SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+            SESSION_CACHE_ALIAS = 'default'
+        else:
+            SESSION_ENGINE = 'django.contrib.sessions.backends.db'
     else:
         # Fallback to in-memory layer when Redis is not configured
         CHANNEL_LAYERS = {
