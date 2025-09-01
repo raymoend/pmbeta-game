@@ -152,9 +152,22 @@ def flag_detail(request, flag_id):
 def attack_flag(request, flag_id):
     lat = _parse_float(request, "lat")
     lon = _parse_float(request, "lon")
+    # Optional custom damage for debugging/tools
+    dmg = None
+    try:
+        if request.content_type and 'application/json' in request.content_type:
+            import json
+            body = json.loads(request.body or b"{}")
+            if 'damage' in body:
+                dmg = int(body.get('damage'))
+        else:
+            if 'damage' in request.POST:
+                dmg = int(request.POST.get('damage'))
+    except Exception:
+        dmg = None
     if lat is None or lon is None:
         return HttpResponseBadRequest("lat and lon are required")
-    result = svc_attack_flag(request.user, flag_id, lat, lon)
+    result = svc_attack_flag(request.user, flag_id, lat, lon, damage=dmg if isinstance(dmg, int) and dmg > 0 else 50)
     # Expect service to return damage/results, and we’ll fetch latest flag state for broadcast
     from .models import TerritoryFlag
     flag = TerritoryFlag.objects.get(id=flag_id)
@@ -244,103 +257,4 @@ def delete_flag(request, flag_id):
     return JsonResponse({"ok": True, "deleted": True, "id": flag_id_str})
 
 
-# FlagRun deprecated: start_flag_run removed
-    """Start or resume a PK-style run at a flag: spawn NPCs inside the circle and track progress."""
-    from .models import TerritoryFlag, FlagRun
-    try:
-        flag = TerritoryFlag.objects.select_for_update().get(id=flag_id)
-    except TerritoryFlag.DoesNotExist:
-        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
-    if flag.owner_id != request.user.id:
-        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
-
-    character = getattr(request.user, 'character', None)
-    if character is None:
-        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
-
-    # If an active run exists, return it
-    run = FlagRun.objects.filter(character=character, flag=flag, status='active').first()
-    if run:
-        return JsonResponse({"ok": True, "run": {
-            "id": str(run.id), "status": run.status, "target": run.target_count,
-            "defeated": run.defeated_count, "remaining": run.remaining,
-            "flag_id": str(flag.id)
-        }})
-
-    # Create new run; scale target by flag level
-    target = max(3, 3 + int(getattr(flag, 'level', 1)) * 2)
-    run = FlagRun.objects.create(character=character, flag=flag, target_count=target, defeated_count=0, status='active')
-    monster_ids = spawn_monsters_in_flag(flag, target)
-    run.active_monster_ids = monster_ids
-    run.save(update_fields=['active_monster_ids', 'updated_at'])
-
-    return JsonResponse({"ok": True, "run": {
-        "id": str(run.id), "status": run.status, "target": run.target_count,
-        "defeated": run.defeated_count, "remaining": run.remaining,
-        "flag_id": str(flag.id)
-    }})
-
-
-# FlagRun deprecated: flag_run_status removed
-    from .models import TerritoryFlag, FlagRun
-    try:
-        flag = TerritoryFlag.objects.get(id=flag_id)
-    except TerritoryFlag.DoesNotExist:
-        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
-    if flag.owner_id != request.user.id:
-        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
-    character = getattr(request.user, 'character', None)
-    if character is None:
-        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
-    run = FlagRun.objects.filter(character=character, flag=flag).order_by('-created_at').first()
-    if not run:
-        return JsonResponse({"ok": True, "run": None})
-    return JsonResponse({"ok": True, "run": {
-        "id": str(run.id), "status": run.status, "target": run.target_count,
-        "defeated": run.defeated_count, "remaining": run.remaining,
-        "flag_id": str(flag.id), "cleared_at": run.cleared_at.isoformat() if run.cleared_at else None
-    }})
-
-
-# FlagRun deprecated: jump_to_next_flag_run removed
-    """Teleport player to the next owned flag (wrap-around). Optionally start a run."""
-    try:
-        import json
-        body = json.loads(request.body or b"{}")
-    except Exception:
-        body = {}
-    start = bool(body.get('start', False))
-
-    character = getattr(request.user, 'character', None)
-    if character is None:
-        return JsonResponse({"ok": False, "error": "no_character"}, status=400)
-
-    current_flag_id = body.get('current_flag_id')
-    next_flag = find_next_flag_to_run(request.user, current_flag_id)
-    if not next_flag:
-        return JsonResponse({"ok": False, "error": "no_flags"}, status=400)
-
-    # Teleport
-    character.lat = next_flag.lat
-    character.lon = next_flag.lon
-    character.save(update_fields=['lat', 'lon'])
-
-    run_payload = None
-    if start:
-        from .models import FlagRun
-        run = FlagRun.objects.filter(character=character, flag=next_flag, status='active').first()
-        if not run:
-            target = max(3, 3 + int(getattr(next_flag, 'level', 1)) * 2)
-            run = FlagRun.objects.create(character=character, flag=next_flag, target_count=target, defeated_count=0, status='active')
-            ids = spawn_monsters_in_flag(next_flag, target)
-            run.active_monster_ids = ids
-            run.save(update_fields=['active_monster_ids', 'updated_at'])
-        run_payload = {"id": str(run.id), "status": run.status, "target": run.target_count, "defeated": run.defeated_count, "remaining": run.remaining, "flag_id": str(next_flag.id)}
-
-    return JsonResponse({
-        "ok": True,
-        "location": {"lat": character.lat, "lon": character.lon},
-        "flag": _serialize_flag(next_flag),
-        "run": run_payload
-    })
 

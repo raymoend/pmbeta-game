@@ -57,7 +57,9 @@ def _xy_from_axial_flat(q: int, r: int, s: float) -> tuple[float, float]:
 
 def _hex_size_m() -> float:
     try:
-        return float(getattr(settings, 'GAME_SETTINGS', {}).get('HEX_SIZE_M', 250.0))
+        gs_game = getattr(settings, 'GAME_SETTINGS', {})
+        gs_pk = getattr(settings, 'PK_SETTINGS', {})
+        return float(gs_game.get('HEX_SIZE_M', gs_pk.get('HEX_SIZE_M', 250.0)))
     except Exception:
         return 250.0
 
@@ -107,8 +109,13 @@ def place_flag(user: User, lat: float, lon: float, name: str | None = None) -> T
     if not user.is_authenticated:
         raise FlagError('unauthenticated', 'User must be authenticated')
 
-    gs = getattr(settings, 'GAME_SETTINGS', {})
-    placement_cost = 100
+    gs_game = getattr(settings, 'GAME_SETTINGS', {})
+    gs_pk = getattr(settings, 'PK_SETTINGS', {})
+    placement_cost = int(
+        gs_game.get('CLAIM_PLACEMENT_COST')
+        or gs_game.get('FLAG_PLACEMENT_COST', 100)
+        or gs_pk.get('CLAIM_PLACEMENT_COST', 100)
+    )
 
     from ..models import TerritoryFlag as TF
     has_any = TF.objects.filter(owner=user).exists()
@@ -121,6 +128,17 @@ def place_flag(user: User, lat: float, lon: float, name: str | None = None) -> T
     # Snap requested location to hex center (global, fixed lattice)
     q_new, r_new = hex_id_for_latlon(lat, lon)
     snapped_lat, snapped_lon = hex_center_latlon(q_new, r_new)
+
+    # Enforce minimum placement distance from any existing flag
+    min_sep = int(
+        gs_game.get('CLAIM_PLACEMENT_MIN_DISTANCE')
+        or gs_game.get('FLAG_PLACEMENT_MIN_DISTANCE', 400)
+        or gs_pk.get('CLAIM_PLACEMENT_MIN_DISTANCE', 400)
+    )
+    for f in TF.objects.all().only('lat','lon'):
+        d = haversine_m(snapped_lat, snapped_lon, f.lat, f.lon)
+        if d < min_sep:
+            raise FlagError('too_close', f'Minimum distance is {min_sep}m')
 
     # Prevent duplicate occupation: one hex = one owner
     # Build set of occupied cells across all flags
@@ -136,7 +154,8 @@ def place_flag(user: User, lat: float, lon: float, name: str | None = None) -> T
         owned_cells = set(hex_id_for_latlon(f.lat, f.lon) for f in TF.objects.filter(owner=user).only('lat','lon'))
         # Neighbor directions for flat-top axial
         neigh = [(+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)]
-        is_adjacent = any(((q_new - dq, r_new - dr) in owned_cells) for (dq, dr) in neigh)
+        # Accept either neighbor orientation; addition is more intuitive when thinking "new next to existing"
+        is_adjacent = any(((q_new - dq, r_new - dr) in owned_cells) or ((q_new + dq, r_new + dr) in owned_cells) for (dq, dr) in neigh)
         if not is_adjacent:
             raise FlagError('not_adjacent', 'New flags must be placed in a hex adjacent to your territory')
 
@@ -232,7 +251,9 @@ def attack_flag(user: User, flag_id: str, at_lat: float, at_lon: float, damage: 
 
     if after == 0:
         flag.status = TerritoryFlag.Status.CAPTURABLE
-        window_s = settings.GAME_SETTINGS.get('FLAG_CAPTURE_WINDOW_S', 300)
+        cfg_game = getattr(settings, 'GAME_SETTINGS', {})
+        cfg_pk = getattr(settings, 'PK_SETTINGS', {})
+        window_s = cfg_game.get('CLAIM_CAPTURE_WINDOW_S') or cfg_game.get('FLAG_CAPTURE_WINDOW_S', 300) or cfg_pk.get('CLAIM_CAPTURE_WINDOW_S', 300)
         flag.capture_window_ends_at = now + timezone.timedelta(seconds=window_s)
     else:
         flag.status = TerritoryFlag.Status.UNDER_ATTACK
@@ -266,7 +287,9 @@ def capture_flag(user: User, flag_id: str, at_lat: float, at_lon: float) -> Dict
     character = getattr(user, 'character', None)
     if character is None:
         raise FlagError('no_character', 'No character found')
-    influence_r = settings.GAME_SETTINGS.get('FLAG_INFLUENCE_RADIUS_M', 150)
+    cfg_game = getattr(settings, 'GAME_SETTINGS', {})
+    cfg_pk = getattr(settings, 'PK_SETTINGS', {})
+    influence_r = cfg_game.get('CLAIM_INFLUENCE_RADIUS_M') or cfg_game.get('FLAG_INFLUENCE_RADIUS_M', 150) or cfg_pk.get('CLAIM_INFLUENCE_RADIUS_M', 150)
     d = haversine_m(character.lat, character.lon, flag.lat, flag.lon)
     if d > influence_r:
         raise FlagError('too_far', 'Too far to capture')
@@ -275,7 +298,7 @@ def capture_flag(user: User, flag_id: str, at_lat: float, at_lon: float) -> Dict
     flag.owner = user
     flag.status = TerritoryFlag.Status.ACTIVE
     flag.hp_current = flag.hp_max
-    protect_s = settings.GAME_SETTINGS.get('FLAG_PROTECTION_S', 600)
+    protect_s = cfg_game.get('CLAIM_PROTECTION_S') or cfg_game.get('FLAG_PROTECTION_S', 600) or cfg_pk.get('CLAIM_PROTECTION_S', 600)
     flag.protection_ends_at = now + timezone.timedelta(seconds=protect_s)
     flag.capture_window_ends_at = None
     flag.save(update_fields=['owner', 'status', 'hp_current', 'protection_ends_at', 'capture_window_ends_at', 'updated_at'])

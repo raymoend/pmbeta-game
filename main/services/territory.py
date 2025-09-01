@@ -15,15 +15,34 @@ EPS = 1e-6
 
 # Unified radius helpers
 def flag_radius_for_level(level: int) -> int:
-    """Return fixed territory radius in meters for all levels.
-    Prefer settings.GAME_SETTINGS.FLAG_RADIUS_M if present; otherwise use 600m.
+    """Return territory radius in meters.
+    Priority of configuration (first found wins):
+    - settings.PK_SETTINGS.CLAIM_RADIUS_M or CLAIM_RADIUS
+    - settings.GAME_SETTINGS.FLAG_RADIUS_M or FLAG_RADIUS
+    Optional per-level growth if *_RADIUS_PER_LEVEL_M is provided.
+    Defaults to fixed 600m when not configured.
     """
-    gs = getattr(settings, 'GAME_SETTINGS', {})
-    # Accept single fixed radius override
-    fixed = gs.get('FLAG_RADIUS_M') or gs.get('FLAG_RADIUS')
+    gs_game = getattr(settings, 'GAME_SETTINGS', {})
+    gs_pk = getattr(settings, 'PK_SETTINGS', {})
+    fixed = (
+        gs_game.get('CLAIM_RADIUS_M')
+        or gs_game.get('CLAIM_RADIUS')
+        or gs_game.get('FLAG_RADIUS_M')
+        or gs_game.get('FLAG_RADIUS')
+        or gs_pk.get('CLAIM_RADIUS_M')
+        or gs_pk.get('CLAIM_RADIUS')
+    )
+    per_level = (
+        gs_game.get('CLAIM_RADIUS_PER_LEVEL_M')
+        or gs_game.get('FLAG_RADIUS_PER_LEVEL_M')
+        or gs_pk.get('CLAIM_RADIUS_PER_LEVEL_M')
+        or 0
+    )
     try:
-        if fixed:
-            return int(fixed)
+        if fixed is not None:
+            base = int(fixed)
+            inc = int(per_level) if per_level else 0
+            return max(0, base + max(0, level - 1) * inc)
     except Exception:
         pass
     return 600
@@ -228,6 +247,38 @@ def spawn_monsters_in_flag(flag: TerritoryFlag, count: int = 5, template_filter=
         )
         created_ids.append(str(m.id))
     return created_ids
+
+# ===== PK-style claim wrappers (aliases) =====
+# These provide claim-named helpers that delegate to the existing flag helpers.
+
+def compute_empires(claims):
+    """Alias to compute_groups for TerritoryFlag collections."""
+    return compute_groups(claims)
+
+
+def spawn_monsters_for_empires(base_per_hex: int = 2, template_filter=None) -> int:
+    """Alias to spawn_monsters_for_groups with PK-style parameter naming."""
+    return spawn_monsters_for_groups(base_per_circle=base_per_hex, template_filter=template_filter)
+
+
+def ensure_claim_monsters(min_alive_per_claim: int = 3, template_filter=None) -> dict:
+    """Alias to ensure_flag_monsters with PK-style parameter naming."""
+    return ensure_flag_monsters(min_alive_per_flag=min_alive_per_claim, template_filter=template_filter)
+
+
+def _uniform_point_in_hex(lat_center: float, lon_center: float, radius_m: float) -> tuple[float, float]:
+    """Sample a quasi-uniform random point within a hex approximated as a circle."""
+    return _uniform_point_in_circle(lat_center, lon_center, radius_m)
+
+
+def spawn_monsters_in_claim(claim, count: int = 5, template_filter=None) -> list:
+    """Alias to spawn_monsters_in_flag with PK-style parameter naming."""
+    return spawn_monsters_in_flag(claim, count=count, template_filter=template_filter)
+
+
+def find_next_claim_to_explore(user, current_claim_id=None):
+    """Alias to find_next_flag_to_run with PK-style parameter naming."""
+    return find_next_flag_to_run(user, current_flag_id=current_claim_id)
 
 
 def find_next_flag_to_run(user, current_flag_id=None) -> TerritoryFlag | None:

@@ -8,7 +8,7 @@ from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
-
+from .services.movement import ensure_move_allowed, MovementError
 
 import re
 
@@ -41,25 +41,16 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         
         # Join personal group for character-specific messages
         self.character_group_name = _safe_group(f'character_{self.character.id}')
-        await self.channel_layer.group_add(
-            self.character_group_name,
-            self.channel_name
-        )
+        await self._safe_group_add(self.character_group_name)
         
         # Join geo tile-based group
         from .utils.geo import tile_for
         self.geo_group = _safe_group(tile_for(float(self.character.lat), float(self.character.lon)))
-        await self.channel_layer.group_add(
-            self.geo_group,
-            self.channel_name
-        )
+        await self._safe_group_add(self.geo_group)
         
         # Join global game room
         self.global_group_name = _safe_group('global_game')
-        await self.channel_layer.group_add(
-            self.global_group_name,
-            self.channel_name
-        )
+        await self._safe_group_add(self.global_group_name)
         
         await self.accept()
         
@@ -82,22 +73,13 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         """Handle WebSocket disconnection"""
         # Leave all groups
         if hasattr(self, 'character_group_name'):
-            await self.channel_layer.group_discard(
-                self.character_group_name,
-                self.channel_name
-            )
+            await self._safe_group_discard(self.character_group_name)
         
         if hasattr(self, 'geo_group') and self.geo_group:
-            await self.channel_layer.group_discard(
-                self.geo_group,
-                self.channel_name
-            )
+            await self._safe_group_discard(self.geo_group)
         
         if hasattr(self, 'global_group_name'):
-            await self.channel_layer.group_discard(
-                self.global_group_name,
-                self.channel_name
-            )
+            await self._safe_group_discard(self.global_group_name)
         
         print(f"Character {self.character.name if hasattr(self, 'character') else 'Unknown'} disconnected")
     
@@ -148,9 +130,11 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             target_lat = float(target.get('lat'))
             target_lon = float(target.get('lon'))
             
-            # Validate movement (basic range check)
-            if not await self.can_move_to(target_lat, target_lon):
-                await self.send_error("Movement out of range")
+            # Server-authoritative movement validation
+            try:
+                await database_sync_to_async(ensure_move_allowed)(self.character, target_lat, target_lon)
+            except MovementError as me:
+                await self.send_error(str(me))
                 return
             
             # Get current position
@@ -166,14 +150,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             new_geo_group = _safe_group(tile_for(float(target_lat), float(target_lon)))
             if old_geo_group != new_geo_group:
                 if old_geo_group:
-                    await self.channel_layer.group_discard(
-                        old_geo_group,
-                        self.channel_name
-                    )
-                await self.channel_layer.group_add(
-                    new_geo_group,
-                    self.channel_name
-                )
+                    await self._safe_group_discard(old_geo_group)
+                await self._safe_group_add(new_geo_group)
                 self.geo_group = new_geo_group
             
             # Broadcast movement to nearby tile group(s)
@@ -193,21 +171,15 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             
             # Send to both old and new geo groups as applicable
             if old_geo_group:
-                await self.channel_layer.group_send(
-                    old_geo_group,
-                    {
-                        'type': 'character_moved',
-                        'data': movement_data
-                    }
-                )
+                await self._safe_group_send(old_geo_group, {
+                    'type': 'character_moved',
+                    'data': movement_data
+                })
             if old_geo_group != self.geo_group and self.geo_group:
-                await self.channel_layer.group_send(
-                    self.geo_group,
-                    {
-                        'type': 'character_moved',
-                        'data': movement_data
-                    }
-                )
+                await self._safe_group_send(self.geo_group, {
+                    'type': 'character_moved',
+                    'data': movement_data
+                })
             
             # Territory presence server-side hint
             owner_id = await self.get_territory_owner_at(target_lat, target_lon)
@@ -255,13 +227,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Invalid chat channel")
                 return
             
-            await self.channel_layer.group_send(
-                group_name,
-                {
-                    'type': 'chat_message',
-                    'data': chat_data
-                }
-            )
+            await self._safe_group_send(group_name, {
+                'type': 'chat_message',
+                'data': chat_data
+            })
             
         except Exception as e:
             print(f"Chat error: {e}")
@@ -344,8 +313,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             
             if trade:
                 # Notify target character
-                await self.channel_layer.group_send(
-                    f'character_{target_character_id}',
+                await self._safe_group_send(
+                    _safe_group(f'character_{target_character_id}'),
                     {
                         'type': 'trade_request_received',
                         'data': {
@@ -446,6 +415,26 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             'message': message
         }))
     
+    # Helper: quiet-safe group operations (when Redis/Channels are unavailable)
+    async def _safe_group_send(self, group_name, message):
+        try:
+            await self.channel_layer.group_send(group_name, message)
+        except Exception:
+            # Quietly ignore transient channel backend errors
+            pass
+
+    async def _safe_group_add(self, group_name):
+        try:
+            await self.channel_layer.group_add(group_name, self.channel_name)
+        except Exception:
+            pass
+
+    async def _safe_group_discard(self, group_name):
+        try:
+            await self.channel_layer.group_discard(group_name, self.channel_name)
+        except Exception:
+            pass
+
     # WebSocket message handlers (called from group_send)
     async def character_moved(self, event):
         """Handle character moved event"""

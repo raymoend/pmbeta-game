@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "daphne -b 0.0.0.0 -p $PORT pmbeta.asgi:application",
+    "startCommand": "python set_django_settings.py && export DJANGO_SETTINGS_MODULE=pmbeta.settings && export RAILWAY_ENVIRONMENT=production && python manage.py migrate --noinput && python manage.py collectstatic --noinput --clear && python manage.py setup_railway || true && daphne -b 0.0.0.0 -p $PORT pmbeta.asgi:application",
     "healthcheckPath": "/",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",

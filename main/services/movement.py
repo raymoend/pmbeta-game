@@ -27,8 +27,16 @@ def ensure_move_allowed(character, new_lat: float, new_lon: float) -> None:
     Sets the move center on first valid move.
     Raises MovementError on violation.
     """
-    cfg = settings.GAME_SETTINGS
-    radius = cfg.get('MOVEMENT_RANGE_M') or cfg.get('MOVEMENT_RANGE', 800)
+    # Prefer GAME_SETTINGS as primary source (PK feel), fallback to PK_SETTINGS, then defaults
+    cfg_game = getattr(settings, 'GAME_SETTINGS', {})
+    cfg_pk = getattr(settings, 'PK_SETTINGS', {})
+    radius = (
+        cfg_game.get('MOVEMENT_RANGE_M')
+        or cfg_game.get('MOVEMENT_RANGE')
+        or cfg_pk.get('MOVEMENT_RANGE_M')
+        or cfg_pk.get('MOVEMENT_RANGE')
+        or 800
+    )
 
     # Initialize center if not set
     if character.move_center_lat is None or character.move_center_lon is None:
@@ -43,8 +51,10 @@ def ensure_move_allowed(character, new_lat: float, new_lon: float) -> None:
 
 
 def ensure_interaction_range(character, target_lat: float, target_lon: float) -> None:
-    cfg = settings.GAME_SETTINGS
-    rng = cfg.get('INTERACTION_RANGE_M', 50)
+    # Prefer GAME_SETTINGS (PK feel), fallback to PK_SETTINGS
+    cfg_game = getattr(settings, 'GAME_SETTINGS', {})
+    cfg_pk = getattr(settings, 'PK_SETTINGS', {})
+    rng = cfg_game.get('INTERACTION_RANGE_M') or cfg_pk.get('INTERACTION_RANGE_M', 50)
     dist = haversine_m(character.lat, character.lon, target_lat, target_lon)
     if dist > rng:
         raise MovementError('out_of_range', f'Target out of range ({int(dist)}m > {rng}m)')

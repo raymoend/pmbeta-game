@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PMBeta - Location Game</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
     
     <!-- Mapbox GL JS -->
     <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
@@ -340,7 +341,7 @@
             
             map = new mapboxgl.Map({
                 container: 'map',
-                style: '{{ game_settings.MAPBOX_STYLE }}',
+                style: '{{ game_settings.MAPBOX_STYLE|default:"mapbox://styles/mapbox/streets-v12" }}',
                 center: [currentPlayer.lon, currentPlayer.lat], // Mapbox uses [lng, lat]
                 zoom: {{ game_settings.ZOOM_LEVEL }},
                 minZoom: 10,

@@ -282,6 +282,8 @@ def rpg_game(request):
     context = {
         'character': character,
         'game_settings': game_settings,
+        'MAPBOX_ACCESS_TOKEN': game_settings.get('MAPBOX_ACCESS_TOKEN'),
+        'MAPBOX_STYLE': game_settings.get('MAPBOX_STYLE', 'mapbox://styles/mapbox/streets-v12'),
     }
     
     return render(request, 'main/rpg_game.html', context)
@@ -785,6 +787,16 @@ def api_combat_action(request):
             status='active'
         )
         
+        # Simple stamina (energy) gating similar to PK: attack costs more than defend
+        stamina_cost = 0
+        if action == 'attack':
+            stamina_cost = 5
+        elif action == 'defend':
+            stamina_cost = 2
+        # Flee has no stamina cost
+        if stamina_cost > 0 and character.current_stamina < stamina_cost:
+            return JsonResponse({'success': False, 'error': f'Not enough stamina ({character.current_stamina}/{stamina_cost} required)'}, status=400)
+        
         if action == 'flee':
             # Handle flee attempt
             flee_success = random.random() < (character.agility / 50.0)  # Higher agility = better flee chance
@@ -845,6 +857,13 @@ def api_combat_action(request):
             
             combat.save()
             
+            # Deduct stamina on successful attack/defend turns (after action resolves)
+            try:
+                if stamina_cost > 0:
+                    character.current_stamina = max(0, int(character.current_stamina) - int(stamina_cost))
+                    character.save(update_fields=['current_stamina'])
+            except Exception:
+                pass
             return JsonResponse({
                 'success': True,
                 'combat_ended': False,
@@ -1142,6 +1161,54 @@ def api_inventory(request):
         
     except Character.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_inventory_sell(request):
+    """Quick-sell items from inventory by name and quantity.
+    Body: { name: string, quantity: int }
+    Sells at item_template.base_value per unit and removes from inventory.
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        name = (data.get('name') or '').strip()
+        qty = int(data.get('quantity') or 0)
+        if not name or qty <= 0:
+            return JsonResponse({'success': False, 'error': 'Invalid name or quantity'}, status=400)
+        try:
+            tpl = ItemTemplate.objects.get(name__iexact=name)
+        except ItemTemplate.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Item not found'}, status=404)
+        try:
+            inv = InventoryItem.objects.get(character=character, item_template=tpl)
+        except InventoryItem.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Item not in inventory'}, status=404)
+        sell_qty = min(inv.quantity, qty)
+        unit_value = int(getattr(tpl, 'base_value', 0) or 0)
+        gold_gain = sell_qty * max(0, unit_value)
+        # Update inventory
+        inv.quantity -= sell_qty
+        if inv.quantity <= 0:
+            inv.delete()
+        else:
+            inv.save(update_fields=['quantity'])
+        # Pay character
+        character.gold += gold_gain
+        character.save(update_fields=['gold'])
+        # Push inventory update via WebSocket if connected
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'sold': sell_qty, 'gold_gained': gold_gain, 'gold': character.gold})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
 
 
 # ===============================

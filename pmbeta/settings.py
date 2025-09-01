@@ -21,6 +21,33 @@ except Exception:
 # Load environment variables from .env file
 load_dotenv()
 
+# Sanitize Mapbox style IDs so invalid versions (e.g., light-v12) don't cause 404s
+# Returns a known-good style. Allowed: streets-v12, dark-v11, light-v11, outdoors-v12, satellite-streets-v12
+# Maps common invalids: light-v12 -> light-v11, streets-v13 -> streets-v12
+
+def sanitize_mapbox_style(user_style: str) -> str:
+    default = 'mapbox://styles/mapbox/streets-v12'
+    try:
+        s = (user_style or '').strip()
+        if not s or not s.startswith('mapbox://'):
+            return default
+        allowed = {
+            'mapbox://styles/mapbox/streets-v12',
+            'mapbox://styles/mapbox/dark-v11',
+            'mapbox://styles/mapbox/light-v11',
+            'mapbox://styles/mapbox/outdoors-v12',
+            'mapbox://styles/mapbox/satellite-streets-v12',
+        }
+        if s in allowed:
+            return s
+        if 'light-v12' in s:
+            return 'mapbox://styles/mapbox/light-v11'
+        if 'streets-v13' in s:
+            return 'mapbox://styles/mapbox/streets-v12'
+        return default
+    except Exception:
+        return default
+
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -192,20 +219,23 @@ else:
 
 # Game-specific settings
 GAME_SETTINGS = {
-    'MOVEMENT_RANGE': 800,  # meters - how far players can move from their center
-    'MOVEMENT_RANGE_M': 800,  # meters - canonical key for enforcement
-    'INTERACTION_RANGE_M': 50,  # meters - range for harvesting/combat interactions
+'MOVEMENT_RANGE': 500,  # PK feel: exploration radius
+    'MOVEMENT_RANGE_M': 500,  # canonical key
+    'INTERACTION_RANGE_M': 30,  # PK-style close interaction range
     'CHUNK_GRANULARITY': 100,  # 0.01 degree chunks like P2K
     'DEFAULT_START_LAT': 41.0646633,  # Cleveland area
     'DEFAULT_START_LON': -80.6391736,
     'ZOOM_LEVEL': 16,  # Maximum zoom level
     'MAPBOX_ACCESS_TOKEN': os.environ.get('MAPBOX_ACCESS_TOKEN', 'pk.eyJ1IjoiamFsbGk5NiIsImEiOiJjbWU3eW9tZnUwOWJuMnJvcmJrN252OGloIn0.0OSOw3J1cDB45AIRS_mEbA'),  # Mapbox access token (env takes precedence)
-    'MAPBOX_STYLE': os.environ.get('MAPBOX_STYLE', 'mapbox://styles/mapbox/light-v12'),  # Map style (override via env)
+    'MAPBOX_STYLE': sanitize_mapbox_style(os.environ.get('MAPBOX_STYLE', 'mapbox://styles/mapbox/streets-v12')),  # Map style (override via env, sanitized)
 
     # PK flag defaults used by services.flags
-    'FLAG_INFLUENCE_RADIUS_M': int(os.environ.get('FLAG_INFLUENCE_RADIUS_M', '150')),
-    'FLAG_CAPTURE_WINDOW_S': int(os.environ.get('FLAG_CAPTURE_WINDOW_S', '300')),
-    'FLAG_PROTECTION_S': int(os.environ.get('FLAG_PROTECTION_S', '600')),
+'FLAG_INFLUENCE_RADIUS_M': int(os.environ.get('FLAG_INFLUENCE_RADIUS_M', '100')),
+    'CLAIM_INFLUENCE_RADIUS_M': int(os.environ.get('CLAIM_INFLUENCE_RADIUS_M', '100')),
+    'FLAG_CAPTURE_WINDOW_S': int(os.environ.get('FLAG_CAPTURE_WINDOW_S', '180')),
+    'CLAIM_CAPTURE_WINDOW_S': int(os.environ.get('CLAIM_CAPTURE_WINDOW_S', '180')),
+    'FLAG_PROTECTION_S': int(os.environ.get('FLAG_PROTECTION_S', '360')),
+    'CLAIM_PROTECTION_S': int(os.environ.get('CLAIM_PROTECTION_S', '360')),
 
     # Mafia-specific settings
     'TERRITORY_INCOME_INTERVAL': 3600,  # Territory income every hour (seconds)
@@ -220,11 +250,15 @@ GAME_SETTINGS = {
     'REPUTATION_DECAY_RATE': 1,  # Reputation points lost per day of inactivity
 
     # Flag territory system (Parallel Kingdom style)
-    'HEX_SIZE_M': 650,  # Hex grid radius (meters) used for snapping and IDs
-    'FLAG_RADIUS_M': 650,  # Circle radius (meters) for server-side presence/adjacency
-    'FLAG_BASE_RADIUS_METERS': 200,  # Level 1 flag territory radius (legacy)
-    'FLAG_LEVEL_RADIUS_MULTIPLIER': 1.5,  # Multiplier per level (legacy)
-    'FLAG_PLACEMENT_MIN_DISTANCE': 400,  # Minimum distance between flags (legacy flow)
+'HEX_SIZE_M': 150,  # PK: smaller, denser hex lattice
+    # PK territory radius (also set claim-style keys for services)
+    'FLAG_RADIUS_M': 300,
+    'CLAIM_RADIUS_M': 300,
+    'CLAIM_RADIUS_PER_LEVEL_M': 100,
+    # Placement rules (PK style)
+    'FLAG_PLACEMENT_MIN_DISTANCE': 200,
+    'CLAIM_PLACEMENT_MIN_DISTANCE': 200,
+    'CLAIM_PLACEMENT_COST': 50,
 
     # Persistent NPC density inside flags (PK-style)
     'MIN_FLAG_NPCS': int(os.environ.get('MIN_FLAG_NPCS', '10')),
@@ -232,6 +266,28 @@ GAME_SETTINGS = {
     # Wild spawn settings outside flags (PK-style wandering mobs)
     'WILD_MIN_NPCS': int(os.environ.get('WILD_MIN_NPCS', '5')),
     'WILD_SPAWN_RADIUS_M': int(os.environ.get('WILD_SPAWN_RADIUS_M', '120')),
+}
+
+# Parallel Kingdom-style overrides used by services when present
+# These settings are preferred by services over GAME_SETTINGS to create a "PK feel".
+PK_SETTINGS = {
+    # Movement and interaction
+    'MOVEMENT_RANGE_M': int(os.environ.get('PK_MOVEMENT_RANGE_M', '800')),  # keep tests stable at 800
+    'INTERACTION_RANGE_M': int(os.environ.get('PK_INTERACTION_RANGE_M', '30')),
+
+    # Territory hex lattice and claim radius
+    'HEX_SIZE_M': int(os.environ.get('PK_HEX_SIZE_M', '150')),  # smaller, denser lattice
+    'CLAIM_RADIUS_M': int(os.environ.get('PK_CLAIM_RADIUS_M', '300')),
+    'CLAIM_RADIUS_PER_LEVEL_M': int(os.environ.get('PK_CLAIM_RADIUS_PER_LEVEL_M', '100')),
+
+    # Placement rules and costs
+    'CLAIM_PLACEMENT_MIN_DISTANCE': int(os.environ.get('PK_CLAIM_PLACEMENT_MIN_DISTANCE', '200')),
+    'CLAIM_PLACEMENT_COST': int(os.environ.get('PK_CLAIM_PLACEMENT_COST', '50')),
+
+    # Combat/capture windows around territory
+    'CLAIM_CAPTURE_WINDOW_S': int(os.environ.get('PK_CLAIM_CAPTURE_WINDOW_S', '180')),
+    'CLAIM_PROTECTION_S': int(os.environ.get('PK_CLAIM_PROTECTION_S', '360')),
+    'CLAIM_INFLUENCE_RADIUS_M': int(os.environ.get('PK_CLAIM_INFLUENCE_RADIUS_M', '100')),
 }
 
 # Authentication settings
@@ -267,16 +323,24 @@ if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
             },
         }
         
-        # Use Redis for caching if available
-        CACHES = {
-            'default': {
-                'BACKEND': 'django_redis.cache.RedisCache',
-                'LOCATION': REDIS_URL,
-                'OPTIONS': {
-                    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        # Cache: default to in-memory unless explicitly opted-in
+        if os.environ.get('USE_REDIS_CACHE', 'false').lower() == 'true':
+            CACHES = {
+                'default': {
+                    'BACKEND': 'django_redis.cache.RedisCache',
+                    'LOCATION': REDIS_URL,
+                    'OPTIONS': {
+                        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                    }
                 }
             }
-        }
+        else:
+            CACHES = {
+                'default': {
+                    'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+                    'LOCATION': 'pmbeta-default-cache'
+                }
+            }
         
         # Sessions: default to DB-backed to avoid auth failures if Redis creds are wrong
         if os.environ.get('USE_REDIS_SESSIONS', 'false').lower() == 'true':
@@ -306,16 +370,24 @@ else:
                 },
             },
         }
-        # Use Redis for caching (sessions optional)
-        CACHES = {
-            'default': {
-                'BACKEND': 'django_redis.cache.RedisCache',
-                'LOCATION': REDIS_URL,
-                'OPTIONS': {
-                    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        # Cache: default to in-memory unless explicitly opted-in
+        if os.environ.get('USE_REDIS_CACHE', 'false').lower() == 'true':
+            CACHES = {
+                'default': {
+                    'BACKEND': 'django_redis.cache.RedisCache',
+                    'LOCATION': REDIS_URL,
+                    'OPTIONS': {
+                        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                    }
                 }
             }
-        }
+        else:
+            CACHES = {
+                'default': {
+                    'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+                    'LOCATION': 'pmbeta-default-cache'
+                }
+            }
         if os.environ.get('USE_REDIS_SESSIONS', 'false').lower() == 'true':
             SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
             SESSION_CACHE_ALIAS = 'default'
