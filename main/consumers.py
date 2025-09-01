@@ -596,7 +596,7 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         # Simple scan; optimize with bbox if needed
         for f in TerritoryFlag.objects.all().only('lat','lon','owner_id','level'):
             # rough distance check in meters
-            from .movement import haversine_m
+            from .services.movement import haversine_m
             if haversine_m(lat, lon, f.lat, f.lon) <= flag_radius_m(f) + 1e-6:
                 return f.owner_id
         return None
