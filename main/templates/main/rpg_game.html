@@ -4,10 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Location RPG - {{ character.name }}</title>
+    {% load static %}
+    <link rel="icon" href="{% static 'favicon.svg' %}" type="image/svg+xml">
     
     <!-- Mapbox GL JS -->
     <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
     <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    
+    <!-- Inject Mapbox token/style from server settings -->
+    <script>
+      window.MAPBOX_ACCESS_TOKEN = "{{ MAPBOX_ACCESS_TOKEN|default:game_settings.MAPBOX_ACCESS_TOKEN|escapejs }}";
+      window.MAPBOX_STYLE = "{{ MAPBOX_STYLE|default:game_settings.MAPBOX_STYLE|default:'mapbox://styles/mapbox/streets-v12'|escapejs }}";
+    </script>
     
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
     <style>
@@ -798,12 +806,12 @@
             <!-- Side Panel -->
             <div class="side-panel" id="sidePanel">
                 <div class="panel-tabs">
-                    <button class="tab-button active" onclick="showTab('inventory')">Inventory</button>
-                    <button class="tab-button" onclick="showTab('character')">Character</button>
-                    <button class="tab-button" onclick="showTab('nearby')">Players</button>
-                    <button class="tab-button" onclick="showTab('log')">Log</button>
-                    <button class="tab-button" onclick="showTab('flags')">Flags</button>
-                    <button class="tab-button" onclick="showTab('crafting')">Crafting</button>
+                    <button class="tab-button active" onclick="showTab('inventory', this)">Inventory</button>
+                    <button class="tab-button" onclick="showTab('character', this)">Character</button>
+                    <button class="tab-button" onclick="showTab('nearby', this)">Players</button>
+                    <button class="tab-button" onclick="showTab('log', this)">Log</button>
+                    <button class="tab-button" onclick="showTab('flags', this)">Flags</button>
+                    <button class="tab-button" onclick="showTab('crafting', this)">Crafting</button>
                 </div>
                 
                 <div class="panel-content">
@@ -1041,11 +1049,38 @@
             combatLog: []
         };
         const CURRENT_USER_ID = {{ request.user.id|default:'null' }};
+        // Style fallback guard to recover from invalid style IDs in production
+        let styleFallbackApplied = false;
         // Path to flag icon (SVG). Place your file at this path, or update the URL accordingly.
         const FLAG_GIF_URL = '/static/img/flag_green.svg';
 
+        // Sanitize Mapbox style: only allow known-good styles and correct common invalids
+        function sanitizeMapboxStyle(userStyle) {
+            try {
+                const def = 'mapbox://styles/mapbox/streets-v12';
+                if (!userStyle || typeof userStyle !== 'string') return def;
+                const s = userStyle.trim();
+                if (!/^mapbox:\/\//.test(s)) return def;
+                const allowed = [
+                    'mapbox://styles/mapbox/streets-v12',
+                    'mapbox://styles/mapbox/dark-v11',
+                    'mapbox://styles/mapbox/light-v11',
+                    'mapbox://styles/mapbox/outdoors-v12',
+                    'mapbox://styles/mapbox/satellite-streets-v12'
+                ];
+                if (allowed.includes(s)) return s;
+                // Fix common invalid versions by mapping to nearest supported
+                if (s.indexOf('light-v12') !== -1) return 'mapbox://styles/mapbox/light-v11';
+                if (s.indexOf('streets-v13') !== -1) return 'mapbox://styles/mapbox/streets-v12';
+                return def;
+            } catch (_) {
+                return 'mapbox://styles/mapbox/streets-v12';
+            }
+        }
+
         // Initialize Mapbox
-        mapboxgl.accessToken = '{{ game_settings.MAPBOX_ACCESS_TOKEN }}';
+        mapboxgl.accessToken = (typeof window !== 'undefined' && window.MAPBOX_ACCESS_TOKEN) ? window.MAPBOX_ACCESS_TOKEN : '{{ game_settings.MAPBOX_ACCESS_TOKEN|escapejs }}';
+        if (!mapboxgl.accessToken) { console.error('Missing MAPBOX_ACCESS_TOKEN'); }
 
         // Flags now use Django API under /api/flags/
 
@@ -1058,14 +1093,24 @@
                 if (ls) ls.style.display = 'none';
                 return;
             }
-            if (!'{{ game_settings.MAPBOX_ACCESS_TOKEN }}') {
+            if (!mapboxgl.accessToken) {
                 console.error('Missing MAPBOX_ACCESS_TOKEN');
                 showMessage('Missing Mapbox token. Please configure MAPBOX_ACCESS_TOKEN.', 'error');
             }
 
+            // Choose a safe style up-front to avoid initial 404s from invalid styles (e.g., light-v12)
+            // Allow URL override for style testing: /game/?style=mapbox://styles/mapbox/streets-v12
+            let styleCandidate = null;
+            try { styleCandidate = new URLSearchParams(window.location.search).get('style') || null; } catch (_) { styleCandidate = null; }
+            if (!styleCandidate) {
+                styleCandidate = (typeof window !== 'undefined' && window.MAPBOX_STYLE) ? window.MAPBOX_STYLE : '{{ game_settings.MAPBOX_STYLE|default:"mapbox://styles/mapbox/streets-v12"|escapejs }}';
+            }
+            const safeStyle = sanitizeMapboxStyle(styleCandidate);
+            try { window.__mapbox_debug = { token_present: !!(mapboxgl.accessToken && mapboxgl.accessToken.length > 40), style_candidate: styleCandidate, style_used: safeStyle }; } catch(_) {}
+
             gameState.map = new mapboxgl.Map({
                 container: 'map',
-                style: '{{ game_settings.MAPBOX_STYLE }}',
+                style: safeStyle,
                 center: [gameState.character.lon, gameState.character.lat],
                 zoom: 17.5, // initial zoom
                 minZoom: 16,
@@ -1081,10 +1126,33 @@
                 keyboard: true // Allow +/- key zoom within bounds
             });
 
-            // Surface Mapbox runtime errors
+            // Surface Mapbox runtime errors with clearer diagnostics
             gameState.map.on('error', function(e) {
-                console.error('Mapbox error:', e && e.error ? e.error : e);
-                showMessage('Map error: ' + (e && e.error && e.error.message ? e.error.message : 'See console'), 'error');
+                const err = e && e.error ? e.error : e;
+                const status = (err && err.status) ? err.status : 0;
+                const url = (err && (err.url || err.resource || '')) || '';
+                try { console.warn('Mapbox request failed', { status, url, message: err && err.message }); } catch (_) {}
+                // If the configured style 404s, recover by switching to a known-good style once
+                if (!styleFallbackApplied && status === 404 && typeof url === 'string' && url.indexOf('/styles/v1/') !== -1) {
+                    console.warn('Map style 404 – falling back to mapbox://styles/mapbox/streets-v12');
+                    styleFallbackApplied = true;
+                    try { gameState.map.setStyle('mapbox://styles/mapbox/streets-v12'); } catch (ex) {}
+                    return;
+                }
+                // Token/auth issues
+                if (status === 401 || status === 403 || (err && /unauth|forbidden/i.test(String(err.message || '')))) {
+                    showMessage('Mapbox auth error: check MAPBOX_ACCESS_TOKEN.', 'error');
+                    const ls = document.getElementById('loadingScreen');
+                    if (ls) ls.style.display = 'none';
+                    return;
+                }
+                // Sprite/glyph asset 404s: warn but do not block map
+                if (status === 404 && typeof url === 'string' && (url.indexOf('/sprites/') !== -1 || url.indexOf('/glyphs/') !== -1)) {
+                    console.warn('Map asset 404 (sprite/glyph). Rendering may be degraded.');
+                    return;
+                }
+                console.error('Mapbox error:', err);
+                showMessage('Map error: ' + (err && err.message ? err.message : 'See console'), 'error');
                 const ls = document.getElementById('loadingScreen');
                 if (ls) ls.style.display = 'none';
             });
@@ -1099,6 +1167,29 @@
 
                 // Load initial game data
                 loadGameData();
+
+                // Add movement radius ring (800m) around player
+                try {
+                    const radiusMeters = 800;
+                    const poly = circlePolygon(gameState.character.lon, gameState.character.lat, radiusMeters, 90);
+                    if (!gameState.map.getSource('move-radius')) {
+                        gameState.map.addSource('move-radius', { type: 'geojson', data: { type: 'Feature', geometry: poly } });
+                    } else {
+                        gameState.map.getSource('move-radius').setData({ type: 'Feature', geometry: poly });
+                    }
+                    if (!gameState.map.getLayer('move-radius-fill')) {
+                        gameState.map.addLayer({
+                            id: 'move-radius-fill',
+                            type: 'fill',
+                            source: 'move-radius',
+                            paint: {
+                                'fill-color': '#3b82f6',
+                                'fill-opacity': 0.07,
+                                'fill-outline-color': '#60a5fa'
+                            }
+                        });
+                    }
+                } catch (e) { console.warn('move-radius add failed', e); }
                 
                 // Hide loading screen
                 document.getElementById('loadingScreen').style.display = 'none';
@@ -2437,7 +2528,7 @@ if (dissolvedFeature) {
         }
 
         // UI Functions
-        function showTab(tabName) {
+        function showTab(tabName, el = null) {
             // Hide all tabs
             document.querySelectorAll('.tab-panel').forEach(panel => {
                 panel.classList.remove('active');
@@ -2447,8 +2538,21 @@ if (dissolvedFeature) {
             });
             
             // Show selected tab
-            document.getElementById(tabName + '-tab').classList.add('active');
-            event.target.classList.add('active');
+            const panel = document.getElementById(tabName + '-tab');
+            if (panel) panel.classList.add('active');
+            
+            // Activate the clicked button if provided; otherwise try to find a matching button
+            if (el && el.classList) {
+                el.classList.add('active');
+            } else {
+                try {
+                    const btn = Array.from(document.querySelectorAll('.tab-button')).find(b => {
+                        const onclick = (b.getAttribute('onclick') || '');
+                        return onclick.indexOf("showTab('" + tabName + "'") !== -1;
+                    });
+                    if (btn) btn.classList.add('active');
+                } catch(_) {}
+            }
         }
 
         function toggleSidePanel() {
