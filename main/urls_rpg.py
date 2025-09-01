@@ -53,6 +53,8 @@ urlpatterns = [
     # Inventory API endpoints
     path('api/rpg/inventory/', views_rpg.api_inventory, name='api_inventory'),
     path('api/rpg/inventory/sell/', views_rpg.api_inventory_sell, name='api_inventory_sell'),
+    path('api/rpg/inventory/equip/', views_rpg.api_inventory_equip, name='api_inventory_equip'),
+    path('api/rpg/inventory/unequip/', views_rpg.api_inventory_unequip, name='api_inventory_unequip'),
     path('api/rpg/character/allocate/', views_rpg.api_allocate_stats, name='api_allocate_stats'),
     
     # Trading API endpoints

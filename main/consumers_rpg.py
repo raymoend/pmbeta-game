@@ -21,18 +21,43 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             if not user.is_authenticated:
                 await self.close(code=4001)
                 return
-            
-            # For now, just accept the connection without database operations
+
+            # Resolve character for this user
+            self.character = await self.get_character(user)
+            if not self.character:
+                await self.close(code=4002)
+                return
+
+            # Accept the socket
             await self.accept()
-            
+
+            # Join character-scoped group for push updates (inventory, character, resources)
+            self.character_group = f"character_{self.character.id}"
+            await self.channel_layer.group_add(self.character_group, self.channel_name)
+
+            # Join a coarse location-scoped group for local events (movement, resources)
+            try:
+                lat_key = int(self.character.lat * 1000)
+                lon_key = int(self.character.lon * 1000)
+                self.location_group = f"location_{lat_key}_{lon_key}"
+                await self.channel_layer.group_add(self.location_group, self.channel_name)
+            except Exception:
+                self.location_group = None
+
+            # Join global chat group
+            try:
+                await self.channel_layer.group_add("global_chat", self.channel_name)
+            except Exception:
+                pass
+
             # Send a simple test message
             await self.send(text_data=json.dumps({
                 'type': 'connection_test',
                 'message': f'WebSocket connected for user {user.username}'
             }))
-            
+
             logger.info(f"WebSocket connected for user: {user.username}")
-            
+
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             await self.close(code=4000)
@@ -218,6 +243,28 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 'lat': event['lat'],
                 'lon': event['lon'],
             }))
+
+    async def inventory_update(self, event):
+        """Forward inventory update signal to client"""
+        await self.send(text_data=json.dumps({'type': 'inventory_update'}))
+
+    async def character_update(self, event):
+        """Forward character update signal to client"""
+        payload = {'type': 'character_update'}
+        data = event.get('data') if isinstance(event, dict) else None
+        if data is not None:
+            payload['data'] = data
+        await self.send(text_data=json.dumps(payload))
+
+    async def resource_update(self, event):
+        """Forward resource node update(s) to client"""
+        try:
+            if 'resource' in event:
+                await self.send(text_data=json.dumps({'type': 'resource_update', 'resource': event['resource']}))
+            elif 'resources' in event:
+                await self.send(text_data=json.dumps({'type': 'resource_update', 'resources': event['resources']}))
+        except Exception:
+            pass
     
     async def chat_message(self, event):
         """Send chat message to client"""

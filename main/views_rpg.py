@@ -788,14 +788,8 @@ def api_combat_action(request):
         )
         
         # Simple stamina (energy) gating similar to PK: attack costs more than defend
+        # Stamina disabled
         stamina_cost = 0
-        if action == 'attack':
-            stamina_cost = 5
-        elif action == 'defend':
-            stamina_cost = 2
-        # Flee has no stamina cost
-        if stamina_cost > 0 and character.current_stamina < stamina_cost:
-            return JsonResponse({'success': False, 'error': f'Not enough stamina ({character.current_stamina}/{stamina_cost} required)'}, status=400)
         
         if action == 'flee':
             # Handle flee attempt
@@ -857,13 +851,6 @@ def api_combat_action(request):
             
             combat.save()
             
-            # Deduct stamina on successful attack/defend turns (after action resolves)
-            try:
-                if stamina_cost > 0:
-                    character.current_stamina = max(0, int(character.current_stamina) - int(stamina_cost))
-                    character.save(update_fields=['current_stamina'])
-            except Exception:
-                pass
             return JsonResponse({
                 'success': True,
                 'combat_ended': False,
@@ -1212,6 +1199,145 @@ def api_inventory_sell(request):
 
 
 # ===============================
+# INVENTORY EQUIP/UNEQUIP
+# ===============================
+
+@login_required
+@require_http_methods(["POST"])
+def api_inventory_equip(request):
+    """Equip a weapon or armor InventoryItem by ID.
+    Body: { inventory_item_id: UUID }
+    Only one weapon and one armor can be equipped at a time. Applies template stat bonuses.
+    """
+    try:
+        from .models import InventoryItem
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        inv_id = data.get('inventory_item_id')
+        if not inv_id:
+            return JsonResponse({'success': False, 'error': 'inventory_item_id required'}, status=400)
+        # Retrieve item and validate ownership
+        try:
+            inv = InventoryItem.objects.select_related('item_template', 'character').get(id=inv_id, character=character)
+        except InventoryItem.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'item_not_found'}, status=404)
+        tpl = inv.item_template
+        item_type = (tpl.item_type or '').lower()
+        if item_type not in ('weapon', 'armor'):
+            return JsonResponse({'success': False, 'error': 'not_equipable'}, status=400)
+        # Level requirement
+        try:
+            lvl_req = int(getattr(tpl, 'level_required', 1) or 1)
+        except Exception:
+            lvl_req = 1
+        if int(character.level) < lvl_req:
+            return JsonResponse({'success': False, 'error': f'level_required_{lvl_req}'}, status=400)
+        # If already equipped, no-op success
+        if inv.is_equipped:
+            return JsonResponse({'success': True, 'message': 'already_equipped', 'character': get_character_data(character)})
+        # Unequip currently equipped of same type (weapon or armor)
+        from .models import InventoryItem as _Inv
+        current_equipped = list(_Inv.objects.select_related('item_template').filter(character=character, is_equipped=True))
+        to_unequip = [it for it in current_equipped if (getattr(it.item_template, 'item_type', '').lower() == item_type)]
+        changed = False
+        for it in to_unequip:
+            # Reverse bonuses
+            t = it.item_template
+            try:
+                character.strength = int(character.strength) - int(getattr(t, 'strength_bonus', 0) or 0)
+                character.defense = int(character.defense) - int(getattr(t, 'defense_bonus', 0) or 0)
+                character.vitality = int(character.vitality) - int(getattr(t, 'vitality_bonus', 0) or 0)
+                character.agility = int(character.agility) - int(getattr(t, 'agility_bonus', 0) or 0)
+                character.intelligence = int(character.intelligence) - int(getattr(t, 'intelligence_bonus', 0) or 0)
+            except Exception:
+                pass
+            it.is_equipped = False
+            it.save(update_fields=['is_equipped', 'updated_at'])
+            changed = True
+        # Apply new item bonuses
+        try:
+            character.strength = int(character.strength) + int(getattr(tpl, 'strength_bonus', 0) or 0)
+            character.defense = int(character.defense) + int(getattr(tpl, 'defense_bonus', 0) or 0)
+            character.vitality = int(character.vitality) + int(getattr(tpl, 'vitality_bonus', 0) or 0)
+            character.agility = int(character.agility) + int(getattr(tpl, 'agility_bonus', 0) or 0)
+            character.intelligence = int(character.intelligence) + int(getattr(tpl, 'intelligence_bonus', 0) or 0)
+        except Exception:
+            pass
+        # Recompute derived stats and clamp
+        try:
+            character.recalculate_derived_stats()
+        except Exception:
+            pass
+        character.save()
+        inv.is_equipped = True
+        inv.save(update_fields=['is_equipped', 'updated_at'])
+        # Push WS updates
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'message': 'equipped', 'character': get_character_data(character)})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_inventory_unequip(request):
+    """Unequip an equipped InventoryItem by ID.
+    Body: { inventory_item_id: UUID }
+    Reverses stat bonuses if the item is equipped.
+    """
+    try:
+        from .models import InventoryItem
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        inv_id = data.get('inventory_item_id')
+        if not inv_id:
+            return JsonResponse({'success': False, 'error': 'inventory_item_id required'}, status=400)
+        try:
+            inv = InventoryItem.objects.select_related('item_template', 'character').get(id=inv_id, character=character)
+        except InventoryItem.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'item_not_found'}, status=404)
+        if not inv.is_equipped:
+            return JsonResponse({'success': True, 'message': 'already_unequipped', 'character': get_character_data(character)})
+        tpl = inv.item_template
+        item_type = (tpl.item_type or '').lower()
+        if item_type not in ('weapon', 'armor'):
+            return JsonResponse({'success': False, 'error': 'not_equipable'}, status=400)
+        # Reverse bonuses
+        try:
+            character.strength = int(character.strength) - int(getattr(tpl, 'strength_bonus', 0) or 0)
+            character.defense = int(character.defense) - int(getattr(tpl, 'defense_bonus', 0) or 0)
+            character.vitality = int(character.vitality) - int(getattr(tpl, 'vitality_bonus', 0) or 0)
+            character.agility = int(character.agility) - int(getattr(tpl, 'agility_bonus', 0) or 0)
+            character.intelligence = int(character.intelligence) - int(getattr(tpl, 'intelligence_bonus', 0) or 0)
+        except Exception:
+            pass
+        try:
+            character.recalculate_derived_stats()
+        except Exception:
+            pass
+        character.save()
+        inv.is_equipped = False
+        inv.save(update_fields=['is_equipped', 'updated_at'])
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'message': 'unequipped', 'character': get_character_data(character)})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+# ===============================
 # TRADING SYSTEM API
 # ===============================
 
@@ -1336,7 +1462,7 @@ def api_character_move(request):
             character.lat, character.lon,
             target_lat, target_lon
         )
-        
+
         # Allow movement during combat with leash-follow behavior handled below.
         # Movement restriction: only block entering private territories owned by others
         from .models import TerritoryFlag

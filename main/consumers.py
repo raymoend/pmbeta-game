@@ -469,6 +469,16 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         payload = event.get('payload', {})
         await self.send(text_data=json.dumps(payload))
 
+    async def resource_update(self, event):
+        """Forward resource node updates from server to client"""
+        try:
+            if 'resource' in event:
+                await self.send(text_data=json.dumps({'type': 'resource_update', 'resource': event['resource']}))
+            elif 'resources' in event:
+                await self.send(text_data=json.dumps({'type': 'resource_update', 'resources': event['resources']}))
+        except Exception:
+            pass
+
     async def inventory_update(self, event):
         """Push a fresh inventory snapshot to the client.
         Triggered by server-side events (e.g., loot drops, trades).

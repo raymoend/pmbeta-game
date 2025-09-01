@@ -16,12 +16,49 @@
       window.MAPBOX_ACCESS_TOKEN = "{{ MAPBOX_ACCESS_TOKEN|default:game_settings.MAPBOX_ACCESS_TOKEN|escapejs }}";
       window.MAPBOX_STYLE = "{{ MAPBOX_STYLE|default:game_settings.MAPBOX_STYLE|default:'mapbox://styles/mapbox/streets-v12'|escapejs }}";
       // Pre-resolved static URLs for NPC markers (hashed in production)
-      window.NPC_MARKER_URLS = {
+      // Map slugs (from monster template names) to SVG assets. Unknown types use 'default'.
+      window.NPC_MARKER_URLS = Object.assign({}, window.NPC_MARKER_URLS || {}, {
+        default: "{% static 'img/npc/markers/npc-default.svg' %}",
+        // Existing
         'territory-thug': "{% static 'img/npc/markers/territory-thug.svg' %}",
         'territory-guard': "{% static 'img/npc/markers/territory-guard.svg' %}",
         'mafia-enforcer': "{% static 'img/npc/markers/mafia-enforcer.svg' %}",
-      };
+        // Themed mafia–alien set
+        'yakuza-blade': "{% static 'img/npc/markers/yakuza-blade.svg' %}",
+        'cartel-sicario': "{% static 'img/npc/markers/cartel-sicario.svg' %}",
+        'void-cultist': "{% static 'img/npc/markers/Void-Cultist.svg' %}",
+        'drone-marauder': "{% static 'img/npc/markers/drone-marauder.svg' %}",
+        'alien-stalker': "{% static 'img/npc/markers/Alien-Stalker.svg' %}",
+        // Classic set
+        'forest-wolf': "{% static 'img/npc/markers/forest-wolf.svg' %}",
+        'goblin-scout': "{% static 'img/npc/markers/Goblin-Scout.svg' %}",
+        'cave-bear': "{% static 'img/npc/markers/Cave-Bear.svg' %}",
+        'rabbit': "{% static 'img/npc/markers/Rabbit.svg' %}"
+      });
       window.NPC_MARKER_BASE = "{% static 'img/npc/markers/' %}";
+      // Resource icons (optional). Fallback to emoji if not found.
+      window.RESOURCE_ICON_URLS = {
+        'tree': "{% static 'img/resources/tree.svg' %}",
+        'berry_bush': "{% static 'img/resources/berry_bush.svg' %}",
+        'herb_patch': "{% static 'img/resources/herb_patch.svg' %}",
+        'stone_quarry': "{% static 'img/resources/stone_quarry.svg' %}",
+        'iron_mine': "{% static 'img/resources/iron_mine.svg' %}",
+        'gold_mine': "{% static 'img/resources/gold_mine.svg' %}",
+        'ruins': "{% static 'img/resources/ruins.svg' %}",
+        'cave': "{% static 'img/resources/cave.svg' %}",
+        'well': "{% static 'img/resources/well.svg' %}",
+        'farm': "{% static 'img/resources/farm.svg' %}"
+      };
+      // Key gameplay ranges/timers for gating and labels (server-configured with safe defaults)
+      window.GAME_CFG = {
+        INTERACTION_RANGE_M: {{ game_settings.INTERACTION_RANGE_M|default:30 }},
+        FLAG_INFLUENCE_RADIUS_M: {{ game_settings.FLAG_INFLUENCE_RADIUS_M|default:100 }},
+        CLAIM_INFLUENCE_RADIUS_M: {{ game_settings.CLAIM_INFLUENCE_RADIUS_M|default:100 }},
+        FLAG_CAPTURE_WINDOW_S: {{ game_settings.FLAG_CAPTURE_WINDOW_S|default:180 }},
+        CLAIM_CAPTURE_WINDOW_S: {{ game_settings.CLAIM_CAPTURE_WINDOW_S|default:180 }},
+        FLAG_PROTECTION_S: {{ game_settings.FLAG_PROTECTION_S|default:360 }},
+        CLAIM_PROTECTION_S: {{ game_settings.CLAIM_PROTECTION_S|default:360 }}
+      };
     </script>
     
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
@@ -457,6 +494,62 @@
         .message.success {
             background: rgba(46, 204, 113, 0.9);
         }
+        /* Chat overlay */
+        .chat-overlay {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            width: 340px;
+            max-width: calc(100vw - 24px);
+            background: rgba(17, 24, 39, 0.9);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            z-index: 1800;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            background: rgba(31, 41, 55, 0.95);
+            color: #e5e7eb;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+        .chat-body {
+            height: 180px;
+            overflow-y: auto;
+            padding: 8px 10px;
+        }
+        .chat-msg { font-size: 0.85rem; color: #e5e7eb; margin-bottom: 6px; }
+        .chat-meta { color: #9ca3af; font-size: 0.75rem; margin-right: 6px; }
+        .chat-input {
+            display: flex;
+            gap: 6px;
+            padding: 8px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            background: rgba(31,41,55,0.95);
+        }
+        .chat-input input[type="text"] {
+            flex: 1;
+            background: rgba(55,65,81,0.6);
+            color: #e5e7eb;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px;
+            padding: 8px 10px;
+        }
+        .chat-input select, .chat-input button {
+            background: rgba(55,65,81,0.6);
+            color: #e5e7eb;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px;
+            padding: 8px 10px;
+            cursor: pointer;
+        }
+        .chat-min { cursor: pointer; color: #9ca3af; }
         
         /* Item drop animation */
         .item-drop {
@@ -818,6 +911,7 @@
                     <button class="tab-button" onclick="showTab('nearby', this)">Players</button>
                     <button class="tab-button" onclick="showTab('log', this)">Log</button>
                     <button class="tab-button" onclick="showTab('flags', this)">Flags</button>
+                    <button class="tab-button" onclick="showTab('resources', this)">Resources</button>
                     <button class="tab-button" onclick="showTab('crafting', this)">Crafting</button>
                 </div>
                 
@@ -897,6 +991,12 @@
                         </div>
                         <div id="flagsList" style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 340px; overflow-y: auto;"></div>
                     </div>
+
+                    <!-- Resources Tab -->
+                    <div id="resources-tab" class="tab-panel">
+                        <h3>Resources</h3>
+                        <div id="resourcesList" style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 340px; overflow-y: auto;"></div>
+                    </div>
                     
                     <!-- Crafting Tab -->
                     <div id="crafting-tab" class="tab-panel">
@@ -948,6 +1048,23 @@
 
     <!-- Message Area -->
     <div class="message-area" id="messageArea"></div>
+
+    <!-- Chat Overlay -->
+    <div class="chat-overlay" id="chatOverlay" aria-live="polite">
+        <div class="chat-header">
+            <div>Chat</div>
+            <div class="chat-min" onclick="toggleChat()">_</div>
+        </div>
+        <div class="chat-body" id="chatMessages"></div>
+        <div class="chat-input">
+            <select id="chatChannelSelect" title="Channel">
+                <option value="location">Local</option>
+                <option value="global">Global</option>
+            </select>
+            <input type="text" id="chatInput" placeholder="Type a message and press Enter" maxlength="200" />
+            <button onclick="sendChat()">Send</button>
+        </div>
+    </div>
     {% if messages %}
     <script>
       window.addEventListener('load', function() {
@@ -1046,9 +1163,12 @@
             websocket: null,
             nearbyPlayers: [],
             monsters: [],
+            resources: [],
             activeCombat: null,
             flags: [],
             flagMarkers: {},
+            resourceMarkers: {},
+            resourceTicker: null,
             hexOrigin: null, // { x, y } in Web Mercator meters for stable lattice anchoring
             autoCombatTimer: null,
             autoCombatBusy: false,
@@ -1209,6 +1329,9 @@
                 
                 // Start game loop
                 startGameLoop();
+
+                // Start resource cooldown ticker (client-side)
+                try { startResourceTicker(); } catch (e) { console.warn('resource ticker init failed', e); }
                 
                 // Add tap-to-move functionality
                 initializeTapToMove();
@@ -1362,6 +1485,9 @@
             
             // Load monsters
             fetchNearbyMonsters();
+
+            // Load resources
+            fetchNearbyResources();
             
             // Load inventory
             loadInventory();
@@ -1391,6 +1517,19 @@
                 })
                 .catch(error => console.error('Error fetching monsters:', error));
         }
+
+        function fetchNearbyResources() {
+            fetch('/api/resources/nearby/?radius=1000', { credentials: 'same-origin' })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || data.success === false) return;
+                    const resources = Array.isArray(data.resources) ? data.resources : [];
+                    gameState.resources = resources;
+                    try { updateResourceMarkers(resources); } catch(_) {}
+                    try { renderResourcesList(resources); } catch(_) {}
+                })
+                .catch(err => console.warn('Error fetching resources', err));
+        }
         
         function fetchNearbyFlags() {
             const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
@@ -1410,9 +1549,8 @@
                   return;
                 }
                 const flags = (data.data && (data.data.flags || data.data)) || [];
-                console.log('🚩 Loaded flags:', flags);
                 // Normalize to frontend shape
-const normalized = flags.map(f => ({
+                const normalized = flags.map(f => ({
                     id: String(f.id),
                     name: f.name || `Flag`,
                     lat: f.lat,
@@ -1422,9 +1560,12 @@ const normalized = flags.map(f => ({
                     is_mine: f.owner_id === CURRENT_USER_ID,
                     status: f.status || 'active',
                     is_private: !!f.is_private,
-                    color: f.color || null
+                    color: f.color || null,
+                    distance_m: typeof f.distance_m === 'number' ? f.distance_m : Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, f.lat, f.lon))
                 }));
                 gameState.flags = normalized;
+                // Fetch detailed timers for nearest flags (up to 10)
+                try { fetchFlagDetails(normalized.slice(0, 10).map(x => x.id)); } catch(_) {}
 
                 // Reconcile markers: remove missing, update existing, add new
                 const currentIds = new Set(normalized.map(f => f.id));
@@ -1460,6 +1601,7 @@ const normalized = flags.map(f => ({
                 // Update presence state based on latest flags
                 checkTerritoryPresence();
                 try { renderFlagsList(); } catch (e) {}
+                try { startFlagTicker(); } catch (e) {}
 
                 if (!gameState.map.getLayer(terrFill)) {
                     // Use hex polygons for seamless connected territories
@@ -1583,23 +1725,27 @@ const normalized = flags.map(f => ({
                 return da - db;
             });
             if (!flags.length) {
-                cont.innerHTML = '<p style="color:#95a5a6; text-align:center;">No flags nearby</p>';
+                cont.innerHTML = '<p style=\"color:#95a5a6; text-align:center;\">No flags nearby</p>';
                 return;
             }
+            const now = Date.now();
             flags.forEach(f => {
                 const dist = Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, f.lat, f.lon));
+                const protectS = f.protect_remaining_s != null ? f.protect_remaining_s : (f.protection_ends_at ? Math.max(0, Math.floor((new Date(f.protection_ends_at).getTime() - now)/1000)) : 0);
+                const captureS = f.capture_remaining_s != null ? f.capture_remaining_s : (f.capture_window_ends_at ? Math.max(0, Math.floor((new Date(f.capture_window_ends_at).getTime() - now)/1000)) : 0);
                 const el = document.createElement('div');
                 el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
+                const statusLine = `${f.status}${protectS>0?` · Protected ${formatDuration(protectS)}`:''}${captureS>0?` · Capture ${formatDuration(captureS)}`:''}`;
                 el.innerHTML = `
-                    <div style="display:flex; flex-direction:column;">
-                      <div style="font-weight:600; color:#ecf0f1;">${(f.name || 'Flag')}</div>
-                      <div style="font-size: 0.8rem; color:#95a5a6;">${dist}m · ${f.status} · ${f.is_private ? 'Private' : 'Public'}</div>
+                    <div style=\"display:flex; flex-direction:column;\">
+                      <div style=\"font-weight:600; color:#ecf0f1;\">${(f.name || 'Flag')}</div>
+                      <div style=\"font-size: 0.8rem; color:#95a5a6;\">${dist}m · ${statusLine} · ${f.is_private ? 'Private' : 'Public'}</div>
                     </div>
-                    <div style="display:flex; gap:6px;">
-                      <button class="btn" style="background:#e74c3c;color:white;" ${f.is_mine || f.status==='destroyed' ? 'disabled' : ''} onclick="attackFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Attack</button>
-                      <button class="btn" style="background:#f1c40f;color:black;" ${(!f.is_mine && f.status==='capturable') ? '' : 'disabled'} onclick="captureFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Capture</button>
-                      <button class="btn" style="background:#2ecc71;color:white;" ${(f.is_mine ? '' : 'disabled')} onclick="collectFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Collect</button>
-                      <button class="btn" style="background:#2563eb;color:white;" ${((f.is_mine || !f.is_private) ? '' : 'disabled')} onclick="jumpToFlag(gameState.flags.find(x=>x.id==='${f.id}'))">Jump</button>
+                    <div style=\"display:flex; gap:6px;\">
+                      <button class=\"btn\" style=\"background:#e74c3c;color:white;\" ${(f.is_mine || f.status==='destroyed' || protectS>0 || dist > (window.GAME_CFG.INTERACTION_RANGE_M||30)) ? 'disabled' : ''} onclick=\"attackFlag(gameState.flags.find(x=>x.id==='${f.id}'))\">Attack</button>
+                      <button class=\"btn\" style=\"background:#f1c40f;color:black;\" ${(!f.is_mine && f.status==='capturable' && captureS>0 && dist <= (window.GAME_CFG.FLAG_INFLUENCE_RADIUS_M||window.GAME_CFG.CLAIM_INFLUENCE_RADIUS_M||100)) ? '' : 'disabled'} onclick=\"captureFlag(gameState.flags.find(x=>x.id==='${f.id}'))\">Capture</button>
+                      <button class=\"btn\" style=\"background:#2ecc71;color:white;\" ${(f.is_mine ? '' : 'disabled')} onclick=\"collectFlag(gameState.flags.find(x=>x.id==='${f.id}'))\">Collect</button>
+                      <button class=\"btn\" style=\"background:#2563eb;color:white;\" ${((f.is_mine || !f.is_private) ? '' : 'disabled')} onclick=\"jumpToFlag(gameState.flags.find(x=>x.id==='${f.id}'))\">Jump</button>
                     </div>
                 `;
                 cont.appendChild(el);
@@ -1654,9 +1800,9 @@ const normalized = flags.map(f => ({
                 // Build a custom marker element using themed icon when available
                 const slug = npcSlug(monster.name);
                 const img = document.createElement('img');
-                const mapped = (window.NPC_MARKER_URLS || {})[slug];
+                const mapObj = window.NPC_MARKER_URLS || {};
+                const mapped = mapObj[slug] || mapObj.default || null;
                 const base = window.NPC_MARKER_BASE || '/static/img/npc/markers/';
-                img.src = mapped || `${base}${slug}.svg`;
                 img.width = 28; img.height = 28;
                 img.style.filter = 'drop-shadow(0 0 2px rgba(0,0,0,0.6))';
                 img.alt = slug;
@@ -1665,9 +1811,17 @@ const normalized = flags.map(f => ({
                 const fallback = document.createElement('div');
                 fallback.style.cssText = `width: 16px; height: 16px; border-radius: 50%; background: ${color}; box-shadow: 0 0 4px rgba(0,0,0,0.6);`;
 
-                // Create marker with image by default and swap to fallback on error
-                const marker = new mapboxgl.Marker({ element: img, anchor: 'center' })
-                img.onerror = () => { try { marker.setElement(fallback); } catch (_) {} };
+                // Avoid 404 spam: use an <img> when we have a pre-resolved URL; otherwise use a tiny colored circle.
+                const useImage = !!mapped;
+                if (!mapObj[slug] && mapObj.default) {
+                    try { console.warn('NPC marker missing for:', slug, '→ using default'); } catch (_) {}
+                }
+                if (useImage) { img.src = mapped; }
+                const markerEl = useImage ? img : fallback;
+
+                const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' });
+                if (useImage) { img.onerror = () => { try { marker.setElement(fallback); } catch (_) {} }; }
+                marker
                     .setLngLat([monster.lon, monster.lat])
                     .setPopup(new mapboxgl.Popup({ 
                         closeOnClick: true,
@@ -1684,6 +1838,170 @@ const normalized = flags.map(f => ({
             if (level <= 5) return '#ffd700';      // Yellow for moderate (levels 3-5)
             if (level <= 8) return '#ff8c00';      // Orange for hard (levels 6-8)
             return '#dc143c';                       // Red for very hard (level 9+)
+        }
+
+        function getResourceEmoji(rt) {
+            switch ((rt || '').toLowerCase()) {
+                case 'tree': return '🌳';
+                case 'berry_bush': return '🍓';
+                case 'herb_patch': return '🌿';
+                case 'stone_quarry': return '🪨';
+                case 'iron_mine': return '⛏️';
+                case 'gold_mine': return '💎';
+                case 'ruins': return '🏺';
+                case 'cave': return '🕳️';
+                case 'well': return '💧';
+                case 'farm': return '🌾';
+                default: return '📍';
+            }
+        }
+        function getResourceIconUrl(rt) {
+            const k = String(rt || '').toLowerCase();
+            const map = (typeof window !== 'undefined' && window.RESOURCE_ICON_URLS) ? window.RESOURCE_ICON_URLS : {};
+            return map[k] || null;
+        }
+        function formatDuration(total) {
+            total = Math.max(0, Math.floor(Number(total || 0)));
+            const m = Math.floor(total / 60);
+            const s = total % 60;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function updateResourceMarkers(resources) {
+            if (!gameState.map) return;
+            if (!gameState.resourceMarkers) gameState.resourceMarkers = {};
+            const ids = new Set((resources || []).map(r => String(r.id)));
+            // Remove missing
+            Object.keys(gameState.resourceMarkers).forEach(id => {
+                if (!ids.has(id)) {
+                    try { gameState.resourceMarkers[id].remove(); } catch(_) {}
+                    delete gameState.resourceMarkers[id];
+                }
+            });
+            // Add/update
+            (resources || []).forEach(r => {
+                const id = String(r.id);
+                const existing = gameState.resourceMarkers[id];
+                const emoji = getResourceEmoji(r.type || r.resource_type);
+                const iconUrl = getResourceIconUrl(r.type || r.resource_type);
+                const canHarvest = !!r.can_harvest && (typeof r.distance === 'number' ? r.distance <= 50 : true);
+                const readyIn = typeof r.ready_in_seconds === 'number' ? r.ready_in_seconds : 0;
+                const readyLine = canHarvest ? '<span style="color:#16a34a;font-weight:600;">Ready</span>' : (readyIn > 0 ? `Ready in ${formatDuration(readyIn)}` : 'Not ready');
+                const popupHTML = `
+                    <div style=\"font-family:Segoe UI;color:#333;min-width:220px;\">
+                        <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px;\">
+                            <span style=\"font-size:18px;\">${emoji}</span>
+                            <strong>${(r.type_display || r.resource_type || 'Resource').toString().replace(/</g,'&lt;')}</strong>
+                        </div>
+                        <div style=\"font-size:0.85rem;color:#555;margin-bottom:6px;\">
+                            Level ${r.level || 1} · Qty ${r.quantity ?? '?'} / ${r.max_quantity ?? '?'}<br/>
+                            ${typeof r.distance === 'number' ? `${Math.round(r.distance)}m away` : ''}
+                            <div style=\"margin-top:4px;color:#6b7280;\">${readyLine}</div>
+                        </div>
+                        <div style=\"text-align:center;\">
+                            <button ${canHarvest ? '' : 'disabled'} class=\"btn\" style=\"background:#16a34a;color:#fff;padding:6px 10px;border-radius:6px;\" onclick=\"harvestResource('${id}')\">Harvest</button>
+                        </div>
+                    </div>`;
+                if (existing) {
+                    try { existing.setLngLat([r.lon, r.lat]).setPopup(new mapboxgl.Popup().setHTML(popupHTML)); } catch(_) {}
+                } else {
+                    let el;
+                    if (iconUrl) {
+                        const img = document.createElement('img');
+                        img.src = iconUrl;
+                        img.width = 20; img.height = 20;
+                        img.style.cssText = 'filter: drop-shadow(0 0 2px rgba(0,0,0,0.6));';
+                        img.onerror = () => { try { img.replaceWith(document.createTextNode(emoji)); } catch(_) {} };
+                        el = document.createElement('div');
+                        el.appendChild(img);
+                    } else {
+                        el = document.createElement('div');
+                        el.style.cssText = 'font-size:18px;filter: drop-shadow(0 0 2px rgba(0,0,0,0.6));';
+                        el.textContent = emoji;
+                    }
+                    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+                        .setLngLat([r.lon, r.lat])
+                        .setPopup(new mapboxgl.Popup({ closeOnClick: true, closeButton: true }).setHTML(popupHTML))
+                        .addTo(gameState.map);
+                    gameState.resourceMarkers[id] = marker;
+                }
+            });
+        }
+
+        async function harvestResource(resourceId) {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const res = await fetch('/api/resources/harvest/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ resource_id: resourceId })
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) {
+                    showMessage((data && data.error) || 'Harvest failed', 'error');
+                    return;
+                }
+                const rewards = data.rewards || {};
+                const items = Array.isArray(rewards.items) ? rewards.items : [];
+                if (items.length) {
+                    try { animateItemDrops({ drops: items.map(i => ({ name: i.name, quantity: i.quantity })) }); } catch(_) {}
+                }
+                // Update local resource snapshot immediately (server also pushes WS event)
+                try {
+                    if (data.resource && data.resource.id) {
+                        const id = String(data.resource.id);
+                        const idx = (gameState.resources || []).findIndex(r => String(r.id) === id);
+                        if (idx >= 0) {
+                            gameState.resources[idx] = Object.assign({}, gameState.resources[idx], data.resource);
+                        } else {
+                            gameState.resources.push(data.resource);
+                        }
+                        updateResourceMarkers(gameState.resources);
+                        renderResourcesList(gameState.resources);
+                    }
+                } catch(_) {}
+                showMessage('Harvested successfully!', 'success');
+                try { loadInventory(); } catch(_) {}
+            } catch (e) {
+                console.warn('harvestResource error', e);
+                showMessage('Harvest failed', 'error');
+            }
+        }
+
+        function renderResourcesList(resources) {
+            const cont = document.getElementById('resourcesList');
+            if (!cont) return;
+            cont.innerHTML = '';
+            const arr = Array.isArray(resources) ? resources.slice() : [];
+            if (!arr.length) {
+                cont.innerHTML = '<p style=\"color:#95a5a6; text-align:center;\">No resources nearby</p>';
+                return;
+            }
+            arr.sort((a,b) => (a.distance||1e9) - (b.distance||1e9));
+            arr.forEach(r => {
+                const emoji = getResourceEmoji(r.type || r.resource_type);
+                const iconUrl = getResourceIconUrl(r.type || r.resource_type);
+                const canHarvest = !!r.can_harvest && (typeof r.distance === 'number' ? r.distance <= 50 : true);
+                const readyIn = typeof r.ready_in_seconds === 'number' ? r.ready_in_seconds : 0;
+                const readyText = canHarvest ? '<span style="color:#22c55e;">Ready</span>' : (readyIn > 0 ? `Ready in ${formatDuration(readyIn)}` : 'Not ready');
+                const el = document.createElement('div');
+                el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
+                const iconSpan = iconUrl ? `<img src="${iconUrl}" style="width:18px;height:18px;vertical-align:middle;" onerror="this.replaceWith(document.createTextNode('${emoji}'))">` : `<span style=\"font-size:18px;\">${emoji}</span>`;
+                el.innerHTML = `
+                    <div style=\"display:flex; align-items:center; gap:8px;\">
+                        ${iconSpan}
+                        <div style=\"display:flex; flex-direction:column;\">
+                            <div style=\"font-weight:600; color:#ecf0f1;\">${(r.type_display || r.resource_type)}</div>
+                            <div style=\"font-size: 0.8rem; color:#95a5a6;\">Lvl ${r.level || 1} · ${Math.round(r.distance || 0)}m · ${r.quantity}/${r.max_quantity} · ${readyText}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <button class=\"btn\" style=\"background:#16a34a;color:white;\" ${canHarvest ? '' : 'disabled'} onclick=\"harvestResource('${r.id}')\">Harvest</button>
+                    </div>`;
+                cont.appendChild(el);
+            });
         }
 
         // Territory polygon helpers
@@ -2052,12 +2370,42 @@ if (dissolvedFeature) {
                     const qty = typeof entry.quantity === 'number' ? entry.quantity : 1;
                     const nm = entry.item.name || 'Item';
                     const desc = entry.item.description || '';
+                    const type = (entry.item.item_type || '').toLowerCase();
                     slot.innerHTML = `
                         <div class="item-icon" style="display:flex;align-items:center;justify-content:center;font-size:20px;background:none;">${icon}</div>
                         <div class="item-quantity">${qty}</div>
                     `;
                     slot.title = `${nm}\n${desc}`;
                     if (entry.is_equipped) slot.classList.add('equipped');
+                    // Attach equip/unequip toggle for weapon/armor
+                    if (type === 'weapon' || type === 'armor') {
+                        slot.style.cursor = 'pointer';
+                        slot.addEventListener('click', async () => {
+                            try {
+                                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                                const isEquipped = !!entry.is_equipped;
+                                const endpoint = isEquipped ? '/api/rpg/inventory/unequip/' : '/api/rpg/inventory/equip/';
+                                const res = await fetch(endpoint, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                                    credentials: 'same-origin',
+                                    body: JSON.stringify({ inventory_item_id: entry.id })
+                                });
+                                const data = await res.json().catch(()=>({success:false}));
+                                if (!res.ok || data.success === false) {
+                                    showMessage((data && (data.error || data.message)) || 'Equip failed', 'error');
+                                } else {
+                                    showMessage(isEquipped ? 'Unequipped' : 'Equipped', 'success');
+                                    updateCharacterStats(data.character || {});
+                                    // Refresh inventory view
+                                    loadInventory();
+                                }
+                            } catch (e) {
+                                console.warn('equip/unequip failed', e);
+                                showMessage('Equip failed', 'error');
+                            }
+                        });
+                    }
                 }
                 
                 inventoryGrid.appendChild(slot);
@@ -2123,8 +2471,30 @@ if (dissolvedFeature) {
                 case 'player_update':
                     updateCharacterStats(data.character);
                     break;
+                case 'resource_update':
+                    try {
+                        const arr = Array.isArray(data.resources) ? data.resources : (data.resource ? [data.resource] : []);
+                        if (arr.length) {
+                            const byId = new Map((gameState.resources || []).map(r => [String(r.id), r]));
+                            arr.forEach(u => {
+                                const id = String(u.id);
+                                const prev = byId.get(id) || {};
+                                byId.set(id, Object.assign({}, prev, u));
+                            });
+                            gameState.resources = Array.from(byId.values());
+                            try { updateResourceMarkers(gameState.resources); } catch(_) {}
+                            try { renderResourcesList(gameState.resources); } catch(_) {}
+                        }
+                    } catch(_) {}
+                    break;
                 case 'nearby_players':
                     updateNearbyPlayers(data.players);
+                    break;
+                case 'chat_message':
+                    try {
+                        const p = data.data || data.payload || {};
+                        addChatMessage(p);
+                    } catch(_) {}
                     break;
                 case 'combat_start':
                     try {
@@ -2187,8 +2557,17 @@ if (dissolvedFeature) {
                     handleTradeRequest(data.trade);
                     break;
                 case 'flag_event':
-                    // Re-fetch flags on any flag event to stay in sync
-                    try { fetchNearbyFlags(); } catch (e) { console.warn('flag_event refresh failed', e); }
+                    // Merge a single-flag update quickly; fallback to refetch
+                    try {
+                        const fid = data.flag && data.flag.id ? String(data.flag.id) : null;
+                        if (fid) {
+                            fetch(`/api/flags/${fid}/`).then(r=>r.json()).then(dd => {
+                                if (dd && dd.ok && dd.flag) mergeFlagDetail(dd.flag);
+                            }).catch(()=>{});
+                        } else {
+                            fetchNearbyFlags();
+                        }
+                    } catch (e) { console.warn('flag_event refresh failed', e); }
                     break;
             }
         }
@@ -2583,6 +2962,58 @@ if (dissolvedFeature) {
             }, 5000);
         }
 
+        // Chat UI
+        function initChatUI() {
+            const input = document.getElementById('chatInput');
+            if (!input) return;
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+            });
+        }
+        function toggleChat() {
+            const el = document.getElementById('chatOverlay');
+            if (!el) return;
+            const body = el.querySelector('.chat-body');
+            const inputRow = el.querySelector('.chat-input');
+            if (el.style.height === '28px') {
+                el.style.height = '';
+                if (body) body.style.display = '';
+                if (inputRow) inputRow.style.display = '';
+            } else {
+                el.style.height = '28px';
+                if (body) body.style.display = 'none';
+                if (inputRow) inputRow.style.display = 'none';
+            }
+        }
+        function addChatMessage(p) {
+            try {
+                const body = document.getElementById('chatMessages');
+                if (!body) return;
+                const who = (p.character_name || 'Unknown').toString().replace(/</g,'&lt;');
+                const ch = (p.channel || 'global');
+                const msg = (p.message || '').toString().replace(/</g,'&lt;');
+                const t = (p.timestamp || '').toString();
+                const row = document.createElement('div');
+                row.className = 'chat-msg';
+                row.innerHTML = `<span class="chat-meta">[${ch}] ${who}</span> ${msg}`;
+                body.appendChild(row);
+                body.scrollTop = body.scrollHeight;
+            } catch(_) {}
+        }
+        function sendChat() {
+            try {
+                const input = document.getElementById('chatInput');
+                const sel = document.getElementById('chatChannelSelect');
+                const text = (input && input.value ? input.value.trim() : '');
+                const channel = (sel && sel.value) || 'location';
+                if (!text) return;
+                if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
+                    gameState.websocket.send(JSON.stringify({ type: 'chat', data: { message: text, channel: channel } }));
+                }
+                input.value = '';
+            } catch(_) {}
+        }
+
         // Combat log helpers
         function renderCombatLog() {
             const cont = document.getElementById('combatLogList');
@@ -2630,11 +3061,34 @@ if (dissolvedFeature) {
         }
 
         function startGameLoop() {
-            // Update game state every 5 seconds
+            // Update game state every 5 seconds (keep resources as a fallback refresh)
             setInterval(() => {
                 fetchNearbyPlayers();
                 fetchNearbyMonsters();
+                fetchNearbyResources();
             }, 5000);
+        }
+
+        function startResourceTicker() {
+            if (gameState.resourceTicker) { try { clearInterval(gameState.resourceTicker); } catch(_) {} }
+            gameState.resourceTicker = setInterval(() => {
+                let changed = false;
+                const arr = Array.isArray(gameState.resources) ? gameState.resources : [];
+                for (let i = 0; i < arr.length; i++) {
+                    const r = arr[i];
+                    if (typeof r.ready_in_seconds === 'number' && r.ready_in_seconds > 0) {
+                        r.ready_in_seconds = Math.max(0, r.ready_in_seconds - 1);
+                        if (r.ready_in_seconds === 0) {
+                            // Optimistically enable harvest; server will validate on click
+                            r.can_harvest = true;
+                        }
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    try { renderResourcesList(arr); } catch(_) {}
+                }
+            }, 1000);
         }
 
         // Mobile responsiveness
@@ -2863,6 +3317,7 @@ if (dissolvedFeature) {
         // Initialize everything when page loads
 window.addEventListener('load', function() {
             initializeMap();
+            try { initChatUI(); } catch(_) {}
             try { updateHealButtonState(); } catch (_) {}
             try { renderCombatLog(); } catch(_) {}
             checkMobile();
@@ -3202,7 +3657,7 @@ window.addEventListener('load', function() {
         }
         
         function addFlagToMap(flag) {
-// Use owner's chosen color when provided, otherwise default to team/status color
+            // Use owner's chosen color when provided, otherwise default to team/status color
             const chosenColor = (typeof flag.color === 'string' && /^#([0-9a-fA-F]{3}){1,2}$/.test(flag.color)) ? flag.color : null;
             const flagColor = chosenColor || (flag.is_mine ? '#2ecc71' : (flag.status === 'capturable' ? '#f1c40f' : '#ff4444'));
             
@@ -3270,28 +3725,36 @@ window.addEventListener('load', function() {
             const isMine = !!flag.is_mine;
             const status = flag.status || 'active';
             const distance = Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, flag.lat, flag.lon));
-            const canAttack = !isMine && status !== 'destroyed';
-            const canCapture = !isMine && status === 'capturable';
+            const interactM = (window.GAME_CFG && window.GAME_CFG.INTERACTION_RANGE_M) || 30;
+            const influenceM = (window.GAME_CFG && (window.GAME_CFG.FLAG_INFLUENCE_RADIUS_M || window.GAME_CFG.CLAIM_INFLUENCE_RADIUS_M)) || 100;
+            const nowMs = Date.now();
+            const protectS = flag.protect_remaining_s != null ? flag.protect_remaining_s : (flag.protection_ends_at ? Math.max(0, Math.floor((new Date(flag.protection_ends_at).getTime() - nowMs)/1000)) : 0);
+            const captureS = flag.capture_remaining_s != null ? flag.capture_remaining_s : (flag.capture_window_ends_at ? Math.max(0, Math.floor((new Date(flag.capture_window_ends_at).getTime() - nowMs)/1000)) : 0);
+            let canAttack = !isMine && status !== 'destroyed' && protectS === 0 && distance <= interactM;
+            let canCapture = !isMine && status === 'capturable' && captureS > 0 && distance <= influenceM;
             const canCollect = isMine && (flag.uncollected_balance || 0) > 0;
             const canJump = isMine || !flag.is_private; // allow public flags
             const canRun = isMine && status === 'active';
+            const extraLines = [];
+            if (protectS > 0) extraLines.push(`Protected: ${formatDuration(protectS)}`);
+            if (captureS > 0 && status === 'capturable') extraLines.push(`Capture: ${formatDuration(captureS)}`);
             popupEl.innerHTML = `
-                <div style="font-family: 'Segoe UI', sans-serif;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                        <strong style="font-size:1rem;color:#2c3e50;">${flag.name || 'Flag'}</strong>
-                        <span style="font-size:0.8rem;background:${flagColor};color:white;padding:2px 8px;border-radius:12px;">L${flag.level || 1}</span>
+                <div style=\"font-family: 'Segoe UI', sans-serif;\">
+                    <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;\">
+                        <strong style=\"font-size:1rem;color:#2c3e50;\">${flag.name || 'Flag'}</strong>
+                        <span style=\"font-size:0.8rem;background:${flagColor};color:white;padding:2px 8px;border-radius:12px;\">L${flag.level || 1}</span>
                     </div>
-                    <div style="font-size:0.85rem;color:#555;margin-bottom:6px;">
+                    <div style=\"font-size:0.85rem;color:#555;margin-bottom:6px;\">
                         Owner: ${isMine ? 'You' : (flag.owner_name || ('#' + (flag.owner_id || '??')))}<br/>
                         Status: ${status.replace('_',' ')}<br/>
-                        Dist: ${distance}m
+                        Dist: ${distance}m${extraLines.length? `<br/>`+extraLines.join(' · ') : ''}
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button id="flag-attack-${flag.id}" ${canAttack ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:${canAttack ? 'pointer' : 'not-allowed'};">Attack</button>
-                        <button id="flag-capture-${flag.id}" ${canCapture ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#f1c40f;color:black;border:none;border-radius:6px;cursor:${canCapture ? 'pointer' : 'not-allowed'};">Capture</button>
-                        <button id="flag-collect-${flag.id}" ${canCollect ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:${canCollect ? 'pointer' : 'not-allowed'};">Collect</button>
-                        <button id="flag-jump-${flag.id}" ${canJump ? '' : 'disabled'} style="flex:1;padding:6px 10px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:${canJump ? 'pointer' : 'not-allowed'};">Jump</button>
-                        ${isMine ? `<button id="flag-privacy-${flag.id}" style="flex:1 1 100%;padding:6px 10px;background:#374151;color:white;border:none;border-radius:6px;">${flag.is_private ? 'Make Public' : 'Make Private'}</button>` : ''}
+                    <div style=\"display:flex;gap:8px;flex-wrap:wrap;\">
+                        <button id=\"flag-attack-${flag.id}\" ${canAttack ? '' : 'disabled'} title=\"${protectS>0 ? 'Protected' : (distance>interactM?'Too far':'')}\" style=\"flex:1;padding:6px 10px;background:#e74c3c;color:white;border:none;border-radius:6px;cursor:${canAttack ? 'pointer' : 'not-allowed'};\">Attack</button>
+                        <button id=\"flag-capture-${flag.id}\" ${canCapture ? '' : 'disabled'} title=\"${captureS<=0?'No capture window':(distance>influenceM?'Too far':'')}\" style=\"flex:1;padding:6px 10px;background:#f1c40f;color:black;border:none;border-radius:6px;cursor:${canCapture ? 'pointer' : 'not-allowed'};\">Capture</button>
+                        <button id=\"flag-collect-${flag.id}\" ${canCollect ? '' : 'disabled'} style=\"flex:1;padding:6px 10px;background:#2ecc71;color:white;border:none;border-radius:6px;cursor:${canCollect ? 'pointer' : 'not-allowed'};\">Collect</button>
+                        <button id=\"flag-jump-${flag.id}\" ${canJump ? '' : 'disabled'} style=\"flex:1;padding:6px 10px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:${canJump ? 'pointer' : 'not-allowed'};\">Jump</button>
+                        ${isMine ? `<button id=\"flag-privacy-${flag.id}\" style=\"flex:1 1 100%;padding:6px 10px;background:#374151;color:white;border:none;border-radius:6px;\">${flag.is_private ? 'Make Public' : 'Make Private'}</button>` : ''}
                     </div>
                 </div>
             `;
@@ -3456,6 +3919,51 @@ window.addEventListener('load', function() {
         }
 
         console.log('🚩 Flag system loaded');
+
+        // Flag detail fetch & timers
+        async function fetchFlagDetails(ids) {
+            if (!Array.isArray(ids) || !ids.length) return;
+            try {
+                await Promise.all(ids.map(async (id) => {
+                    try {
+                        const res = await fetch(`/api/flags/${id}/`);
+                        const d = await res.json();
+                        if (d && d.ok && d.flag) mergeFlagDetail(d.flag);
+                    } catch (e) {}
+                }));
+                try { renderFlagsList(); } catch(_) {}
+            } catch(_) {}
+        }
+        function mergeFlagDetail(detail) {
+            try {
+                const id = String(detail.id);
+                const idx = (gameState.flags||[]).findIndex(f => String(f.id) === id);
+                if (idx >= 0) {
+                    const old = gameState.flags[idx] || {};
+                    const merged = Object.assign({}, old, detail || {});
+                    // Precompute remaining seconds for UI tickers
+                    const now = Date.now();
+                    if (merged.protection_ends_at) {
+                        merged.protect_remaining_s = Math.max(0, Math.floor((new Date(merged.protection_ends_at).getTime() - now)/1000));
+                    }
+                    if (merged.capture_window_ends_at) {
+                        merged.capture_remaining_s = Math.max(0, Math.floor((new Date(merged.capture_window_ends_at).getTime() - now)/1000));
+                    }
+                    gameState.flags[idx] = merged;
+                }
+            } catch(_) {}
+        }
+        function startFlagTicker() {
+            try { if (gameState.flagTicker) clearInterval(gameState.flagTicker); } catch(_) {}
+            gameState.flagTicker = setInterval(() => {
+                let changed = false;
+                (gameState.flags || []).forEach(f => {
+                    if (typeof f.protect_remaining_s === 'number' && f.protect_remaining_s > 0) { f.protect_remaining_s = Math.max(0, f.protect_remaining_s - 1); changed = true; }
+                    if (typeof f.capture_remaining_s === 'number' && f.capture_remaining_s > 0) { f.capture_remaining_s = Math.max(0, f.capture_remaining_s - 1); changed = true; }
+                });
+                if (changed) { try { renderFlagsList(); } catch(_) {} }
+            }, 1000);
+        }
 
         // Client-side clear of flags and territory layers (non-destructive)
         function resetMapClient() {

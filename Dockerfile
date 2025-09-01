@@ -14,23 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Wrap daphne so it resolves $PORT and applies migrations before starting, even when Start Command bypasses a shell
-RUN if [ -x /usr/local/bin/daphne ]; then mv /usr/local/bin/daphne /usr/local/bin/daphne.orig; fi \
-    && printf '%s\n' \
-       '#!/bin/sh' \
-       'set -e' \
-       'PORT="${PORT:-8000}"' \
-       'HOST="${HOST:-0.0.0.0}"' \
-       'APP="${ASGI_APP:-pmbeta.asgi:application}"' \
-       'echo "Running migrations (wrapper): python manage.py migrate --noinput"' \
-       'python manage.py migrate --noinput || echo "Warning: migrations failed (wrapper)"' \
-       'if [ "${RUN_SETUP_RAILWAY:-}" = "1" ] || [ "${RUN_SETUP_RAILWAY:-}" = "true" ]; then' \
-       '  echo "Running setup_railway (wrapper)"' \
-       '  python manage.py setup_railway --admin-password "${ADMIN_PASSWORD:-admin123}" || true' \
-       'fi' \
-       'exec /usr/local/bin/daphne.orig -b "$HOST" -p "$PORT" "$APP"' \
-       > /usr/local/bin/daphne \
-    && chmod +x /usr/local/bin/daphne
 
 COPY . .
 
@@ -40,7 +23,8 @@ RUN python manage.py collectstatic --noinput || true
 EXPOSE 8000
 
 # Ensure production behavior on Railway and bind to provided $PORT
-ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production RAILWAY_QUICK_START=1
+# Also run migrations on start, but do so asynchronously so the web process binds quickly for healthchecks.
+ENV DJANGO_SETTINGS_MODULE=pmbeta.settings RAILWAY_ENVIRONMENT=production RAILWAY_QUICK_START=1 RUN_MIGRATIONS_ON_START=1 RUN_MIGRATIONS_SYNC=0
 
 # Provide an `export` wrapper so Railway Start Command overrides like
 # `export FOO=bar && python ...` work even without a shell.

@@ -75,6 +75,8 @@ urlpatterns = [
     # PK Movement and Resource API (temporary - until PK models are fixed)
     path('api/player/move/', views.api_player_move, name='api_player_move_root'),
     path('api/resources/nearby/', views_resources.nearby_resources, name='api_nearby_resources_root'),
+    path('api/resources/harvest/', views_resources.harvest_resource, name='api_harvest_resource_root'),
+    path('api/resources/info/<uuid:resource_id>/', views_resources.resource_info, name='api_resource_info_root'),
     path('api/resources/collect/<uuid:resource_id>/', views.api_collect_resource, name='api_collect_resource_root'),
     path('api/resources/check-spawn/', views.api_check_resource_spawn, name='api_check_resource_spawn_root'),
     # Root alias for inventory berries (to avoid 404 then fallback)

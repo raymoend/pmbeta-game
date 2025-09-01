@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <style>
+      .bg{fill:#8e24aa}
+      .glyph{fill:#fff;font-family:Segoe UI,Arial,sans-serif;font-size:22px;font-weight:700}
+    </style>
+  </defs>
+  <circle class="bg" cx="32" cy="32" r="24"/>
+  <text class="glyph" x="32" y="39" text-anchor="middle">YB</text>
+</svg>
+

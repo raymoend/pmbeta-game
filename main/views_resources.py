@@ -11,6 +11,7 @@ from django.utils import timezone
 from django.db.models import Q
 import json
 import math
+from datetime import timedelta
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
@@ -51,6 +52,20 @@ def nearby_resources(request):
             # Check if resource can respawn
             resource.respawn_if_ready()
             
+            # Compute cooldown info for client-side timers
+            ready_in = 0
+            ready_at = None
+            if resource.last_harvested:
+                cooldown = int(resource.respawn_time) * 60
+                elapsed = (timezone.now() - resource.last_harvested).total_seconds()
+                remaining = int(max(0, cooldown - elapsed))
+                ready_in = remaining
+                if remaining > 0:
+                    try:
+                        ready_at = (resource.last_harvested + timedelta(seconds=cooldown)).isoformat()
+                    except Exception:
+                        ready_at = None
+
             resources.append({
                 'id': str(resource.id),
                 'type': resource.resource_type,
@@ -63,7 +78,10 @@ def nearby_resources(request):
                 'max_quantity': resource.max_quantity,
                 'is_depleted': resource.is_depleted,
                 'can_harvest': resource.can_harvest(),
-                'respawn_time': resource.respawn_time
+                'respawn_time': resource.respawn_time,
+                'last_harvested': resource.last_harvested.isoformat() if resource.last_harvested else None,
+                'ready_in_seconds': ready_in,
+                'ready_at': ready_at,
             })
     
     # Sort by distance
@@ -97,7 +115,7 @@ def harvest_resource(request):
     # Check if character can act
     if not character.can_act():
         return JsonResponse({'error': 'Character cannot act (in combat or no stamina)'}, status=400)
-    
+
     # Check distance (must be within 50 meters)
     distance = character.distance_to(resource.lat, resource.lon)
     if distance > 50:
@@ -140,6 +158,39 @@ def harvest_resource(request):
                 'quantity': item_data['quantity'],
                 'total_quantity': inventory_item.quantity
             })
+
+    # Prepare updated resource payload for response and WS broadcast
+    try:
+        cooldown = int(resource.respawn_time) * 60
+    except Exception:
+        cooldown = 0
+    ready_in = 0
+    ready_at = None
+    if resource.last_harvested and cooldown > 0:
+        elapsed = (timezone.now() - resource.last_harvested).total_seconds()
+        remaining = int(max(0, cooldown - elapsed))
+        ready_in = remaining
+        if remaining > 0:
+            try:
+                ready_at = (resource.last_harvested + timedelta(seconds=cooldown)).isoformat()
+            except Exception:
+                ready_at = None
+    resource_payload = {
+        'id': str(resource.id),
+        'type': resource.resource_type,
+        'type_display': resource.get_resource_type_display(),
+        'level': resource.level,
+        'lat': resource.lat,
+        'lon': resource.lon,
+        'quantity': resource.quantity,
+        'max_quantity': resource.max_quantity,
+        'is_depleted': resource.is_depleted,
+        'can_harvest': resource.can_harvest(),
+        'respawn_time': resource.respawn_time,
+        'last_harvested': resource.last_harvested.isoformat() if resource.last_harvested else None,
+        'ready_in_seconds': ready_in,
+        'ready_at': ready_at,
+    }
     
     # Create game event
     GameEvent.objects.create(
@@ -155,9 +206,10 @@ def harvest_resource(request):
         }
     )
     
-    # Push live updates over WebSocket (inventory and character)
+    # Push live updates over WebSocket (inventory, character, and resource)
     try:
         channel_layer = get_channel_layer()
+        # Character-scoped updates
         async_to_sync(channel_layer.group_send)(
             f'character_{character.id}',
             {'type': 'inventory_update'}
@@ -166,6 +218,21 @@ def harvest_resource(request):
             f'character_{character.id}',
             {'type': 'character_update'}
         )
+        # Resource update for this player and nearby location group
+        async_to_sync(channel_layer.group_send)(
+            f'character_{character.id}',
+            {'type': 'resource_update', 'resource': resource_payload}
+        )
+        try:
+            # Broadcast to geo tile group so nearby players can see updates
+            from .utils.geo import tile_for
+            tile_group = tile_for(float(character.lat), float(character.lon))
+            async_to_sync(channel_layer.group_send)(
+                tile_group,
+                {'type': 'resource_update', 'resource': resource_payload}
+            )
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -177,6 +244,7 @@ def harvest_resource(request):
             'gold': rewards.get('gold', 0),
             'items': items_received
         },
+        'resource': resource_payload,
         'resource_status': {
             'quantity': resource.quantity,
             'is_depleted': resource.is_depleted
@@ -375,6 +443,20 @@ def resource_info(request, resource_id):
     
     # Get potential rewards
     rewards = resource.get_harvest_rewards(character.level)
+
+    # Cooldown info for timers
+    ready_in = 0
+    ready_at = None
+    if resource.last_harvested:
+        cooldown = int(resource.respawn_time) * 60
+        elapsed = (timezone.now() - resource.last_harvested).total_seconds()
+        remaining = int(max(0, cooldown - elapsed))
+        ready_in = remaining
+        if remaining > 0:
+            try:
+                ready_at = (resource.last_harvested + timedelta(seconds=cooldown)).isoformat()
+            except Exception:
+                ready_at = None
     
     return JsonResponse({
         'success': True,
@@ -393,6 +475,9 @@ def resource_info(request, resource_id):
             'respawn_time': resource.respawn_time,
             'harvest_count': resource.harvest_count,
             'base_experience': resource.base_experience,
-            'potential_rewards': rewards
+            'potential_rewards': rewards,
+            'last_harvested': resource.last_harvested.isoformat() if resource.last_harvested else None,
+            'ready_in_seconds': ready_in,
+            'ready_at': ready_at,
         }
     })
