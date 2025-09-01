@@ -15,6 +15,13 @@
     <script>
       window.MAPBOX_ACCESS_TOKEN = "{{ MAPBOX_ACCESS_TOKEN|default:game_settings.MAPBOX_ACCESS_TOKEN|escapejs }}";
       window.MAPBOX_STYLE = "{{ MAPBOX_STYLE|default:game_settings.MAPBOX_STYLE|default:'mapbox://styles/mapbox/streets-v12'|escapejs }}";
+      // Pre-resolved static URLs for NPC markers (hashed in production)
+      window.NPC_MARKER_URLS = {
+        'territory-thug': "{% static 'img/npc/markers/territory-thug.svg' %}",
+        'territory-guard': "{% static 'img/npc/markers/territory-guard.svg' %}",
+        'mafia-enforcer': "{% static 'img/npc/markers/mafia-enforcer.svg' %}",
+      };
+      window.NPC_MARKER_BASE = "{% static 'img/npc/markers/' %}";
     </script>
     
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
@@ -1647,7 +1654,9 @@ const normalized = flags.map(f => ({
                 // Build a custom marker element using themed icon when available
                 const slug = npcSlug(monster.name);
                 const img = document.createElement('img');
-                img.src = `/static/img/npc/markers/${slug}.svg`;
+                const mapped = (window.NPC_MARKER_URLS || {})[slug];
+                const base = window.NPC_MARKER_BASE || '/static/img/npc/markers/';
+                img.src = mapped || `${base}${slug}.svg`;
                 img.width = 28; img.height = 28;
                 img.style.filter = 'drop-shadow(0 0 2px rgba(0,0,0,0.6))';
                 img.alt = slug;
@@ -1655,10 +1664,10 @@ const normalized = flags.map(f => ({
                 // Fallback element (colored circle) if icon missing
                 const fallback = document.createElement('div');
                 fallback.style.cssText = `width: 16px; height: 16px; border-radius: 50%; background: ${color}; box-shadow: 0 0 4px rgba(0,0,0,0.6);`;
-                let markerEl = img;
-                img.onerror = () => { markerEl = fallback; };
 
-                const marker = new mapboxgl.Marker({ element: markerEl, anchor: 'center' })
+                // Create marker with image by default and swap to fallback on error
+                const marker = new mapboxgl.Marker({ element: img, anchor: 'center' })
+                img.onerror = () => { try { marker.setElement(fallback); } catch (_) {} };
                     .setLngLat([monster.lon, monster.lat])
                     .setPopup(new mapboxgl.Popup({ 
                         closeOnClick: true,
