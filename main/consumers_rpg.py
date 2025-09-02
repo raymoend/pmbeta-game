@@ -5,6 +5,7 @@ Handles real-time geolocation, simplified combat, trading, and chat
 import json
 import logging
 import asyncio
+import time
 from django.utils import timezone
 from django.conf import settings
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -27,6 +28,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         """Handle WebSocket connection"""
         try:
+            # simple in-memory rate limiter per connection
+            self._rl = {}
             user = self.scope["user"]
             if not user.is_authenticated:
                 await self.close(code=4001)
@@ -113,6 +116,9 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def handle_player_movement(self, data):
         """Handle real-time player movement with fine-grained geolocation"""
         try:
+            # Throttle rapid movement messages (anti-spam). Allow one every 250ms.
+            if not self._rate_ok('move', 0.250):
+                return
             new_lat = float(data.get('lat'))
             new_lon = float(data.get('lon'))
 
@@ -199,6 +205,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def handle_chat_message(self, data):
         """Handle PK-style chat (local or global)"""
         try:
+            # Rate limit chat: 1 message per second per connection
+            if not self._rate_ok('chat', 1.0):
+                await self.send_error("You're sending messages too quickly.")
+                return
             message = data.get('message', '').strip()
             chat_type = data.get('chat_type', 'local')
 
@@ -246,6 +256,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def handle_jump_to_flag(self, data):
         """Handle Jump to Flag travel request"""
         try:
+            # Throttle jump requests to 1 per second
+            if not self._rate_ok('jump', 1.0):
+                await self.send_error('Please wait before jumping again')
+                return
             flag_id = data.get('flag_id')
             if not flag_id:
                 await self.send_error('flag_id required')
@@ -649,6 +663,18 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     def get_current_timestamp(self):
         """Get current timestamp"""
         return timezone.now().isoformat()
+
+    def _rate_ok(self, key: str, interval_s: float) -> bool:
+        """Simple per-connection rate limiter. Returns True if allowed."""
+        try:
+            now = time.monotonic()
+            last = self._rl.get(key)
+            if last is not None and (now - last) < float(interval_s):
+                return False
+            self._rl[key] = now
+            return True
+        except Exception:
+            return True
 
     @database_sync_to_async
     def _character_hud_snapshot(self) -> dict:

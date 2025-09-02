@@ -277,6 +277,23 @@ railway logs -f
 - For custom domain, update `ALLOWED_HOSTS` (domain only) and `CSRF_TRUSTED_ORIGINS` (with `https://` scheme).
 - For multi-instance WebSockets, add Redis service so `CHANNEL_LAYERS` uses `channels-redis`.
 
+### Docker Compose (Dev)
+
+A quick local stack with Postgres, Redis, web, Celery worker and beat is provided.
+
+- Prerequisites: Docker Desktop
+- Start the stack:
+```bash
+# from repo root
+docker-compose up --build
+```
+- First-time seeding (in another shell):
+```bash
+docker exec -it pmbeta_web python manage.py setup_dev --username=admin --password=admin123
+```
+- Open http://localhost:8000
+- Stop stack: Ctrl+C, then `docker-compose down`
+
 ### Docker Deployment (Alternative)
 ```dockerfile
 # Example Dockerfile (Daphne + ASGI)

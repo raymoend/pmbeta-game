@@ -3219,10 +3219,10 @@ if (dissolvedFeature) {
                 const input = document.getElementById('chatInput');
                 const sel = document.getElementById('chatChannelSelect');
                 const text = (input && input.value ? input.value.trim() : '');
-                const channel = (sel && sel.value) || 'location';
+                const channel = (sel && sel.value) || 'local';
                 if (!text) return;
                 if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
-                    gameState.websocket.send(JSON.stringify({ type: 'chat', data: { message: text, channel: channel } }));
+                    gameState.websocket.send(JSON.stringify({ type: 'chat_message', message: text, chat_type: channel }));
                 }
                 input.value = '';
             } catch(_) {}
