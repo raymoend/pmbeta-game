@@ -98,6 +98,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_nearby_data()
             elif message_type == 'ping':
                 await self.send_pong()
+            elif message_type == 'jump_to_flag':
+                await self.handle_jump_to_flag(data)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
 
@@ -221,6 +223,27 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             'type': 'pong',
             'timestamp': self.get_current_timestamp()
         }))
+
+    async def handle_jump_to_flag(self, data):
+        """Handle Jump to Flag travel request"""
+        try:
+            flag_id = data.get('flag_id')
+            if not flag_id:
+                await self.send_error('flag_id required')
+                return
+            result = await self._jump_to_flag_db(flag_id)
+            await self.send(text_data=json.dumps({
+                'type': 'jump_to_flag',
+                'result': result
+            }))
+            # Push HUD/character update
+            try:
+                await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Jump to flag error: {e}")
+            await self.send_error('Jump failed')
 
     async def send_error(self, message):
         """Send error to client"""
@@ -561,3 +584,31 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     def get_current_timestamp(self):
         """Get current timestamp"""
         return timezone.now().isoformat()
+
+    @database_sync_to_async
+    def _jump_to_flag_db(self, flag_id: str):
+        """Perform jump using travel service; returns a serializable dict.
+        Formats TravelError into {success: False, error, seconds_remaining?}.
+        """
+        from .services.travel import jump_to_flag, TravelError
+        try:
+            res = jump_to_flag(self.scope.get('user'), flag_id)
+            return {'success': True, 'location': res.get('location')}
+        except TravelError as te:
+            # If cooldown, compute remaining seconds
+            seconds_remaining = None
+            try:
+                from django.utils import timezone as _tz
+                from django.conf import settings as _st
+                cooldown_s = int(getattr(_st, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
+                ch = self.character
+                if getattr(ch, 'last_jump_at', None):
+                    elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
+                    if elapsed < cooldown_s:
+                        seconds_remaining = max(0, int(cooldown_s - elapsed))
+            except Exception:
+                seconds_remaining = None
+            out = {'success': False, 'error': te.code}
+            if seconds_remaining is not None:
+                out['seconds_remaining'] = seconds_remaining
+            return out

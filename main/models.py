@@ -160,6 +160,9 @@ class Character(BaseModel):
     # Downed/respawn state (PK-style)
     downed_at = models.DateTimeField(null=True, blank=True)
     respawn_available_at = models.DateTimeField(null=True, blank=True)
+    
+    # Travel cooldowns
+    last_jump_at = models.DateTimeField(null=True, blank=True)
 
     # Customization (chosen at registration only)
     class_type = models.CharField(max_length=32, choices=CLASS_CHOICES, default='cyber_warrior')
@@ -1004,6 +1007,9 @@ class TerritoryFlag(BaseModel):
     name = models.CharField(max_length=64, blank=True, default='')
     lat = models.FloatField(db_index=True)
     lon = models.FloatField(db_index=True)
+    # Hex occupancy (axial coordinates); optional for legacy flags
+    hex_q = models.IntegerField(null=True, blank=True, db_index=True)
+    hex_r = models.IntegerField(null=True, blank=True, db_index=True)
     level = models.PositiveSmallIntegerField(default=1)
     hp_current = models.PositiveIntegerField(default=100)
     hp_max = models.PositiveIntegerField(default=100)
@@ -1026,6 +1032,9 @@ class TerritoryFlag(BaseModel):
         indexes = [
             models.Index(fields=['lat', 'lon']),
         ]
+        unique_together = (
+            ('hex_q', 'hex_r'),
+        )
 
     def __str__(self):
         return f"Flag {self.name or str(self.id)[:8]} L{self.level} ({self.lat:.4f},{self.lon:.4f})"
