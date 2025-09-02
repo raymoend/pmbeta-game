@@ -1,8 +1,8 @@
 """
-P2K-Style WebSocket Consumer
-Implements chunk-based world loading and smooth movement like Parallel Kingdom
+Archived legacy P2K consumer kept for historical reference only.
+Do NOT import this module in the live application.
 """
-import json
+raise ImportError("main.p2k_consumer is archived. Use main.consumers_rpg.RPGGameConsumer and tile/hex services instead.")
 import uuid
 import time
 from channels.generic.websocket import AsyncWebsocketConsumer
