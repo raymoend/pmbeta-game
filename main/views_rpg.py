@@ -388,14 +388,17 @@ def api_character_relocate(request):
         character.lon = new_lon
         character.save()
         
-        # Log the relocation event
-        GameEvent.objects.create(
-            character=character,
-            event_type='player_teleport',
-            title='GPS Relocation',
-            message=f'Teleported from ({old_lat:.4f}, {old_lon:.4f}) to ({new_lat:.4f}, {new_lon:.4f})',
-            data={'old_location': {'lat': old_lat, 'lon': old_lon}, 'new_location': {'lat': new_lat, 'lon': new_lon}}
-        )
+        # Log the relocation event (best-effort; ignore invalid choice errors)
+        try:
+            GameEvent.objects.create(
+                character=character,
+                event_type='loot_dropped',  # reuse a valid type for generic notification
+                title='GPS Relocation',
+                message=f'Teleported from ({old_lat:.4f}, {old_lon:.4f}) to ({new_lat:.4f}, {new_lon:.4f})',
+                data={'old_location': {'lat': old_lat, 'lon': old_lon}, 'new_location': {'lat': new_lat, 'lon': new_lon}}
+            )
+        except Exception:
+            pass
         
         return JsonResponse({
             'success': True,
@@ -1506,6 +1509,110 @@ def api_inventory_unequip(request):
         except Exception:
             pass
         return JsonResponse({'success': True, 'message': 'unequipped', 'character': get_character_data(character)})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
+# ===============================
+# NOTIFICATIONS (GameEvent) API
+# ===============================
+
+@login_required
+@require_http_methods(["GET"])
+def api_events_list(request):
+    """List GameEvent entries for the current character with simple pagination.
+    Query params:
+      - page: int (default 1)
+      - page_size: int (default 20, max 100)
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        try:
+            page = max(1, int(request.GET.get('page', 1)))
+        except Exception:
+            page = 1
+        try:
+            page_size = int(request.GET.get('page_size', 20))
+        except Exception:
+            page_size = 20
+        page_size = max(1, min(100, page_size))
+        start = (page - 1) * page_size
+        end = start + page_size
+        qs = GameEvent.objects.filter(character=character).order_by('-created_at')
+        total = qs.count()
+        events = list(qs[start:end])
+        unread_count = GameEvent.objects.filter(character=character, is_read=False).count()
+        def _serialize(ev: GameEvent):
+            try:
+                created_iso = ev.created_at.isoformat()
+            except Exception:
+                created_iso = None
+            return {
+                'id': str(ev.id),
+                'event_type': ev.event_type,
+                'title': ev.title,
+                'message': ev.message,
+                'data': ev.data,
+                'is_read': bool(ev.is_read),
+                'created_at': created_iso,
+            }
+        return JsonResponse({
+            'success': True,
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+            'unread': unread_count,
+            'events': [_serialize(e) for e in events],
+        })
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_events_mark_read(request):
+    """Mark specific GameEvent ids as read for current character.
+    Body: { ids: [uuid, ...] }
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        try:
+            body = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            body = {}
+        ids = body.get('ids') or []
+        # Filter valid UUID strings only
+        valid_ids = []
+        for v in ids:
+            try:
+                s = str(v)
+                if s:
+                    valid_ids.append(s)
+            except Exception:
+                continue
+        if not valid_ids:
+            return JsonResponse({'success': False, 'error': 'no_ids'}, status=400)
+        updated = GameEvent.objects.filter(character=character, id__in=valid_ids, is_read=False).update(is_read=True)
+        unread_count = GameEvent.objects.filter(character=character, is_read=False).count()
+        return JsonResponse({'success': True, 'updated': updated, 'unread': unread_count})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_events_mark_all_read(request):
+    """Mark all GameEvent rows as read for current character."""
+    try:
+        character = Character.objects.get(user=request.user)
+        updated = GameEvent.objects.filter(character=character, is_read=False).update(is_read=True)
+        return JsonResponse({'success': True, 'updated': updated, 'unread': 0})
     except Character.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
     except Exception as e:

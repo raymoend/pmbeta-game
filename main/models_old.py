@@ -1,8 +1,8 @@
 """
-PMBeta Game Models
-Location-based game models inspired by Parallel Kingdom
+Archived legacy models kept for historical reference only.
+Do NOT import this module in the live application.
 """
-from django.db import models
+raise ImportError("main.models_old is archived. Use main.models (current RPG models) instead.")
 from django.contrib.auth.models import User
 from django.core.cache import caches
 from django.utils import timezone

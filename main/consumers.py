@@ -1,8 +1,8 @@
 """
-WebSocket consumers for real-time RPG game functionality
-Handles character movement, combat, trading, and chat
+Archived legacy consumer kept for historical reference only.
+Do NOT import this module in the live application.
 """
-import json
+raise ImportError("main.consumers is archived. Use main.consumers_rpg.RPGGameConsumer instead.")
 import asyncio
 from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer

@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: pmbeta_redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  db:
+    image: postgres:15-alpine
+    container_name: pmbeta_db
+    environment:
+      POSTGRES_DB: pmbeta
+      POSTGRES_USER: pmbeta
+      POSTGRES_PASSWORD: pmbeta
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  web:
+    build: .
+    container_name: pmbeta_web
+    command: ["sh", "-c", "python manage.py migrate && daphne -b 0.0.0.0 -p 8000 pmbeta.asgi:application"]
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: pmbeta.settings
+      DATABASE_URL: postgres://pmbeta:pmbeta@db:5432/pmbeta
+      REDIS_URL: redis://redis:6379/0
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret}
+      DEBUG: "true"
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    working_dir: /app
+
+  worker:
+    build: .
+    container_name: pmbeta_worker
+    command: ["celery", "-A", "pmbeta", "worker", "-l", "info"]
+    environment:
+      DJANGO_SETTINGS_MODULE: pmbeta.settings
+      DATABASE_URL: postgres://pmbeta:pmbeta@db:5432/pmbeta
+      REDIS_URL: redis://redis:6379/0
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret}
+      DEBUG: "true"
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    working_dir: /app
+
+  beat:
+    build: .
+    container_name: pmbeta_beat
+    command: ["celery", "-A", "pmbeta", "beat", "-l", "info"]
+    environment:
+      DJANGO_SETTINGS_MODULE: pmbeta.settings
+      DATABASE_URL: postgres://pmbeta:pmbeta@db:5432/pmbeta
+      REDIS_URL: redis://redis:6379/0
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret}
+      DEBUG: "true"
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    working_dir: /app
+
+volumes:
+  pgdata:
+

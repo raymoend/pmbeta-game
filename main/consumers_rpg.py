@@ -1,155 +1,144 @@
 """
-WebSocket consumers for real-time RPG game features
-Handles real-time combat, trading, player movement, and chat
+WebSocket consumers for Parallel Kingdom-style RPG game
+Handles real-time geolocation, simplified combat, trading, and chat
 """
 import json
 import logging
+import asyncio
+import time
+from django.utils import timezone
+from django.conf import settings
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-import asyncio
 
 logger = logging.getLogger(__name__)
 
 
+def _grid_factor() -> int:
+    """Grid factor for location groups. 20000 ≈ ~50m cells; 1000 ≈ ~1km cells."""
+    try:
+        return int(getattr(settings, 'WS_LOCATION_GRID_FACTOR', 20000))
+    except Exception:
+        return 20000
+
+
 class RPGGameConsumer(AsyncWebsocketConsumer):
-    """WebSocket consumer for real-time RPG game updates"""
-    
+    """WebSocket consumer for Parallel Kingdom-style real-time RPG updates"""
+
     async def connect(self):
         """Handle WebSocket connection"""
         try:
-            # Get user from session
+            # simple in-memory rate limiter per connection
+            self._rl = {}
             user = self.scope["user"]
             if not user.is_authenticated:
                 await self.close(code=4001)
                 return
 
-            # Resolve character for this user
             self.character = await self.get_character(user)
             if not self.character:
                 await self.close(code=4002)
                 return
 
-            # Accept the socket
             await self.accept()
 
-            # Join character-scoped group for push updates (inventory, character, resources)
+            # Character group for targeted updates
             self.character_group = f"character_{self.character.id}"
             await self.channel_layer.group_add(self.character_group, self.channel_name)
 
-            # Join a coarse location-scoped group for local events (movement, resources)
-            try:
-                lat_key = int(self.character.lat * 1000)
-                lon_key = int(self.character.lon * 1000)
-                self.location_group = f"location_{lat_key}_{lon_key}"
-                await self.channel_layer.group_add(self.location_group, self.channel_name)
-            except Exception:
-                self.location_group = None
+            # Fine-grained location group
+            lat_key = int(self.character.lat * _grid_factor())
+            lon_key = int(self.character.lon * _grid_factor())
+            self.location_group = f"location_{lat_key}_{lon_key}"
+            await self.channel_layer.group_add(self.location_group, self.channel_name)
 
-            # Join global chat group
-            try:
-                await self.channel_layer.group_add("global_chat", self.channel_name)
-            except Exception:
-                pass
+            # Optional global groups
+            await self.channel_layer.group_add("global_trade", self.channel_name)
+            await self.channel_layer.group_add("global_chat", self.channel_name)
 
-            # Send a simple test message
             await self.send(text_data=json.dumps({
                 'type': 'connection_test',
-                'message': f'WebSocket connected for user {user.username}'
+                'message': f'Connected as {self.character.name} at ({self.character.lat}, {self.character.lon})'
             }))
-
             logger.info(f"WebSocket connected for user: {user.username}")
 
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             await self.close(code=4000)
-    
+
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
         try:
             if hasattr(self, 'character_group'):
-                await self.channel_layer.group_discard(
-                    self.character_group,
-                    self.channel_name
-                )
-            
+                await self.channel_layer.group_discard(self.character_group, self.channel_name)
             if hasattr(self, 'location_group'):
-                await self.channel_layer.group_discard(
-                    self.location_group,
-                    self.channel_name
-                )
-            
-            await self.channel_layer.group_discard(
-                "global_chat",
-                self.channel_name
-            )
-            
-            # Update character status to offline
+                await self.channel_layer.group_discard(self.location_group, self.channel_name)
+            await self.channel_layer.group_discard("global_trade", self.channel_name)
+            await self.channel_layer.group_discard("global_chat", self.channel_name)
             if hasattr(self, 'character'):
                 await self.update_character_online_status(self.character.id, False)
                 logger.info(f"WebSocket disconnected for character: {self.character.name}")
-                
         except Exception as e:
             logger.error(f"WebSocket disconnect error: {e}")
-    
+
     async def receive(self, text_data):
         """Handle incoming WebSocket messages"""
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
-            
+
             if message_type == 'player_movement':
                 await self.handle_player_movement(data)
-            elif message_type == 'combat_action':
-                await self.handle_combat_action(data)
             elif message_type == 'start_combat':
-                # Client-initiated start (optional; usually the HTTP API will trigger a group event)
                 await self.handle_start_combat(data)
             elif message_type == 'stop_combat':
                 await self.stop_combat_loop()
+            elif message_type == 'trade_request':
+                await self.handle_trade_request(data)
             elif message_type == 'chat_message':
                 await self.handle_chat_message(data)
             elif message_type == 'request_nearby_data':
                 await self.send_nearby_data()
             elif message_type == 'ping':
                 await self.send_pong()
+            elif message_type == 'jump_to_flag':
+                await self.handle_jump_to_flag(data)
+            elif message_type == 'collect_flag_revenue':
+                await self.handle_collect_flag_revenue(data)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
-                
+
         except json.JSONDecodeError:
-            logger.error("Invalid JSON received in WebSocket")
+            logger.error("Invalid JSON received")
         except Exception as e:
-            logger.error(f"Error handling WebSocket message: {e}")
-    
+            logger.error(f"Error handling message: {e}")
+
     async def handle_player_movement(self, data):
-        """Handle real-time player movement"""
+        """Handle real-time player movement with fine-grained geolocation"""
         try:
+            # Throttle rapid movement messages (anti-spam). Allow one every 250ms.
+            if not self._rate_ok('move', 0.250):
+                return
             new_lat = float(data.get('lat'))
             new_lon = float(data.get('lon'))
-            
-            # Basic validation
+
             if not (-90 <= new_lat <= 90) or not (-180 <= new_lon <= 180):
                 await self.send_error("Invalid coordinates")
                 return
-            
-            # Update character position
-            old_lat, old_lon = await self.update_character_position(self.character.id, new_lat, new_lon)
-            
-            # Check if we need to change location group
-            new_location_group = f"location_{int(new_lat * 1000)}_{int(new_lon * 1000)}"
+
+            # Validate territory + stamina and persist move (atomic on DB thread)
+            try:
+                old_lat, old_lon = await self._validate_and_move(self.character.id, new_lat, new_lon)
+            except Exception as e:
+                await self.send_error(str(e))
+                return
+
+            new_location_group = f"location_{int(new_lat * _grid_factor())}_{int(new_lon * _grid_factor())}"
             if new_location_group != self.location_group:
-                # Leave old location group
-                await self.channel_layer.group_discard(
-                    self.location_group,
-                    self.channel_name
-                )
-                # Join new location group
-                await self.channel_layer.group_add(
-                    new_location_group,
-                    self.channel_name
-                )
+                await self.channel_layer.group_discard(self.location_group, self.channel_name)
+                await self.channel_layer.group_add(new_location_group, self.channel_name)
                 self.location_group = new_location_group
-            
-            # Broadcast movement to nearby players
+
             await self.channel_layer.group_send(
                 self.location_group,
                 {
@@ -160,373 +149,12 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                     'lon': new_lon,
                 }
             )
-            
+
         except (ValueError, TypeError) as e:
             await self.send_error(f"Invalid movement data: {e}")
-    
-    async def handle_combat_action(self, data):
-        """Handle real-time combat actions"""
-        try:
-            action_type = data.get('action')
-            combat_id = data.get('combat_id')
-            
-            if not combat_id or not action_type:
-                await self.send_error("Missing combat data")
-                return
-            
-            # Process combat action (manual actions like 'flee' supported; 'attack' usually handled by loop)
-            result = await self.process_combat_action(combat_id, action_type)
-            
-            if result:
-                # Send result back to sender
-                await self.send(text_data=json.dumps({
-                    'type': 'combat_result',
-                    'data': result
-                }))
-                
-        except Exception as e:
-            logger.error(f"Combat action error: {e}")
-            await self.send_error("Combat action failed")
-    
-    async def handle_chat_message(self, data):
-        """Handle real-time chat messages"""
-        try:
-            message = data.get('message', '').strip()
-            chat_type = data.get('chat_type', 'local')  # local, global
-            
-            if not message or len(message) > 500:
-                await self.send_error("Invalid message")
-                return
-            
-            chat_data = {
-                'type': 'chat_message',
-                'message': message,
-                'character_name': self.character.name,
-                'character_id': str(self.character.id),
-                'chat_type': chat_type,
-                'timestamp': self.get_current_timestamp()
-            }
-            
-            if chat_type == 'local':
-                # Send to nearby players
-                await self.channel_layer.group_send(
-                    self.location_group,
-                    chat_data
-                )
-            elif chat_type == 'global':
-                # Send to all online players
-                await self.channel_layer.group_send(
-                    "global_chat",
-                    chat_data
-                )
-                
-        except Exception as e:
-            logger.error(f"Chat message error: {e}")
-            await self.send_error("Chat failed")
-    
-    async def send_pong(self):
-        """Respond to ping with pong"""
-        await self.send(text_data=json.dumps({
-            'type': 'pong',
-            'timestamp': self.get_current_timestamp()
-        }))
-    
-    async def send_error(self, message):
-        """Send error message to client"""
-        await self.send(text_data=json.dumps({
-            'type': 'error',
-            'message': message
-        }))
-    
-    # WebSocket event handlers
-    async def player_moved(self, event):
-        """Send player movement update to client"""
-        if str(self.character.id) != event['character_id']:  # Don't send to self
-            await self.send(text_data=json.dumps({
-                'type': 'player_movement',
-                'character_id': event['character_id'],
-                'character_name': event['character_name'],
-                'lat': event['lat'],
-                'lon': event['lon'],
-            }))
 
-    async def inventory_update(self, event):
-        """Forward inventory update signal to client"""
-        await self.send(text_data=json.dumps({'type': 'inventory_update'}))
-
-    async def character_update(self, event):
-        """Forward character update signal to client"""
-        payload = {'type': 'character_update'}
-        data = event.get('data') if isinstance(event, dict) else None
-        if data is not None:
-            payload['data'] = data
-        await self.send(text_data=json.dumps(payload))
-
-    async def resource_update(self, event):
-        """Forward resource node update(s) to client"""
-        try:
-            if 'resource' in event:
-                await self.send(text_data=json.dumps({'type': 'resource_update', 'resource': event['resource']}))
-            elif 'resources' in event:
-                await self.send(text_data=json.dumps({'type': 'resource_update', 'resources': event['resources']}))
-        except Exception:
-            pass
-    
-    async def chat_message(self, event):
-        """Send chat message to client"""
-        await self.send(text_data=json.dumps({
-            'type': 'chat_message',
-            'message': event['message'],
-            'character_name': event['character_name'],
-            'character_id': event['character_id'],
-            'chat_type': event['chat_type'],
-            'timestamp': event['timestamp']
-        }))
-    
-    async def notification(self, event):
-        """Send notification to client"""
-        await self.send(text_data=json.dumps({
-            'type': 'notification',
-            'title': event.get('title', 'Notification'),
-            'message': event['message'],
-            'notification_type': event.get('notification_type', 'info')
-        }))
-    
-    # Database helper methods
-    @database_sync_to_async
-    def get_character(self, user):
-        """Get character for user"""
-        try:
-            from .models import Character
-            return Character.objects.get(user=user)
-        except:
-            return None
-    
-    @database_sync_to_async
-    def update_character_position(self, character_id, lat, lon):
-        """Update character position in database"""
-        try:
-            from .models import Character
-            character = Character.objects.get(id=character_id)
-            old_lat, old_lon = character.lat, character.lon
-            character.lat = lat
-            character.lon = lon
-            character.save(update_fields=['lat', 'lon'])
-            return old_lat, old_lon
-        except:
-            return None, None
-    
-    @database_sync_to_async
-    def update_character_online_status(self, character_id, is_online):
-        """Update character online status"""
-        try:
-            from .models import Character
-            character = Character.objects.get(id=character_id)
-            character.is_online = is_online
-            character.save(update_fields=['is_online', 'last_activity'])
-            return True
-        except:
-            return False
-    
-    @database_sync_to_async
-    def process_combat_action(self, combat_id, action_type):
-        """Process combat action in database"""
-        try:
-            from .models import PvECombat
-            import random
-            
-            # Get combat session
-            combat = PvECombat.objects.get(id=combat_id, status='active')
-            
-            if action_type == 'attack':
-                # Simple combat resolution
-                player_damage = max(1, combat.character.strength - combat.monster.template.defense + random.randint(-3, 3))
-                combat.monster_hp = max(0, combat.monster_hp - player_damage)
-                
-                message = f"You dealt {player_damage} damage!"
-                
-                if combat.monster_hp <= 0:
-                    # Monster defeated
-                    combat.status = 'victory'
-                    combat.experience_gained = combat.monster.template.base_experience
-                    combat.gold_gained = combat.monster.template.base_gold
-                    combat.character.gain_experience(combat.experience_gained)
-                    combat.character.gold += combat.gold_gained
-                    combat.character.in_combat = False
-                    combat.character.save()
-                    combat.monster.die()
-                    message += f" Monster defeated! Gained {combat.experience_gained} XP and {combat.gold_gained} gold!"
-                else:
-                    # Monster counter-attack
-                    monster_damage = max(1, combat.monster.template.strength - combat.character.defense + random.randint(-2, 2))
-                    combat.character_hp = max(0, combat.character_hp - monster_damage)
-                    message += f" Monster hit you for {monster_damage} damage!"
-                    
-                    if combat.character_hp <= 0:
-                        combat.status = 'defeat'
-                        combat.character.current_hp = 1
-                        combat.character.in_combat = False
-                        combat.character.save()
-                        message += " You were defeated!"
-                
-                combat.save()
-                
-                return {
-                    'combat_id': str(combat.id),
-                    'status': combat.status,
-                    'character_hp': combat.character_hp,
-                    'monster_hp': combat.monster_hp,
-                    'message': message
-                }
-            
-            elif action_type == 'flee':
-                # Attempt to flee
-                if random.random() < 0.7:  # 70% chance to flee successfully
-                    combat.status = 'fled'
-                    combat.character.in_combat = False
-                    combat.character.save()
-                    combat.monster.in_combat = False
-                    combat.monster.current_target = None
-                    combat.monster.save()
-                    combat.save()
-                    
-                    return {
-                        'combat_id': str(combat.id),
-                        'status': 'fled',
-                        'message': 'You successfully fled from combat!'
-                    }
-                else:
-                    # Failed to flee, monster gets free attack
-                    monster_damage = max(1, combat.monster.template.strength - combat.character.defense + random.randint(-1, 1))
-                    combat.character_hp = max(0, combat.character_hp - monster_damage)
-                    
-                    if combat.character_hp <= 0:
-                        combat.status = 'defeat'
-                        combat.character.current_hp = 1
-                        combat.character.in_combat = False
-                        combat.character.save()
-                    
-                    combat.save()
-                    
-                    return {
-                        'combat_id': str(combat.id),
-                        'status': combat.status,
-                        'character_hp': combat.character_hp,
-                        'monster_hp': combat.monster_hp,
-                        'message': f'Failed to flee! Monster hit you for {monster_damage} damage!'
-                    }
-                
-        except Exception as e:
-            logger.error(f"Combat processing error: {e}")
-            return None
-    
-    async def send_character_status(self):
-        """Send current character status to client"""
-        character_data = await self.get_character_data(self.character.id)
-        if character_data:
-            await self.send(text_data=json.dumps({
-                'type': 'character_status',
-                'data': character_data
-            }))
-    
-    async def send_nearby_data(self):
-        """Send nearby players and monsters to client"""
-        nearby_data = await self.get_nearby_data(self.character.id)
-        if nearby_data:
-            await self.send(text_data=json.dumps({
-                'type': 'nearby_data',
-                'data': nearby_data
-            }))
-    
-    @database_sync_to_async
-    def get_character_data(self, character_id):
-        """Get character data for client"""
-        try:
-            from .models import Character
-            character = Character.objects.get(id=character_id)
-            return {
-                'id': str(character.id),
-                'name': character.name,
-                'level': character.level,
-                'experience': character.experience,
-                'lat': character.lat,
-                'lon': character.lon,
-                'current_hp': character.current_hp,
-                'max_hp': character.max_hp,
-                'current_mana': character.current_mana,
-                'max_mana': character.max_mana,
-                'gold': character.gold,
-                'in_combat': character.in_combat
-            }
-        except:
-            return None
-    
-    @database_sync_to_async
-    def get_nearby_data(self, character_id):
-        """Get nearby players and monsters"""
-        try:
-            from .models import Character, Monster
-            character = Character.objects.get(id=character_id)
-            
-            # Get nearby players (within 1km)
-            lat_range = 0.01
-            lon_range = 0.01
-            
-            nearby_players = Character.objects.filter(
-                lat__gte=character.lat - lat_range,
-                lat__lte=character.lat + lat_range,
-                lon__gte=character.lon - lon_range,
-                lon__lte=character.lon + lon_range,
-                is_online=True
-            ).exclude(id=character.id)[:20]
-            
-            # Get nearby monsters (within 500m)
-            lat_range_monsters = 0.005
-            lon_range_monsters = 0.005
-            
-            nearby_monsters = Monster.objects.filter(
-                lat__gte=character.lat - lat_range_monsters,
-                lat__lte=character.lat + lat_range_monsters,
-                lon__gte=character.lon - lon_range_monsters,
-                lon__lte=character.lon + lon_range_monsters,
-                is_alive=True
-            ).select_related('template')[:10]
-            
-            return {
-                'players': [
-                    {
-                        'id': str(p.id),
-                        'name': p.name,
-                        'level': p.level,
-                        'lat': p.lat,
-                        'lon': p.lon
-                    }
-                    for p in nearby_players
-                ],
-                'monsters': [
-                    {
-                        'id': str(m.id),
-                        'name': m.template.name,
-                        'level': m.template.level,
-                        'lat': m.lat,
-                        'lon': m.lon,
-                        'current_hp': m.current_hp,
-                        'max_hp': m.max_hp
-                    }
-                    for m in nearby_monsters
-                ]
-            }
-        except:
-            return {'players': [], 'monsters': []}
-    
-    def get_current_timestamp(self):
-        """Get current timestamp"""
-        from django.utils import timezone
-        return timezone.now().isoformat()
-
-    # --- PK-style auto-combat loop ---
     async def handle_start_combat(self, data):
-        """Optional client message to initiate a combat loop (monster_id required)."""
+        """Initiate simplified PK-style combat"""
         try:
             monster_id = data.get('monster_id')
             if not monster_id:
@@ -538,28 +166,251 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 return
             await self.start_combat_loop({'combat_id': combat_id})
         except Exception as e:
-            logger.error(f"start_combat error: {e}")
-            await self.send_error('start_combat failed')
+            logger.error(f"Combat start error: {e}")
+            await self.send_error('Combat start failed')
+
+    async def handle_trade_request(self, data):
+        """Handle trade initiation with nearby player"""
+        try:
+            target_character_id = data.get('target_character_id')
+            items = data.get('items', [])
+
+            if not target_character_id or not items:
+                await self.send_error("Missing trade data")
+                return
+
+            trade_id = await self.create_trade(self.character.id, target_character_id, items)
+            if trade_id:
+                await self.channel_layer.group_send(
+                    f"character_{target_character_id}",
+                    {
+                        'type': 'trade_offer',
+                        'trade_id': str(trade_id),
+                        'from_character': self.character.name,
+                        'items': items
+                    }
+                )
+                await self.send(text_data=json.dumps({
+                    'type': 'trade_initiated',
+                    'trade_id': str(trade_id),
+                    'message': f"Trade offer sent to character {target_character_id}"
+                }))
+            else:
+                await self.send_error("Failed to initiate trade")
+
+        except Exception as e:
+            logger.error(f"Trade request error: {e}")
+            await self.send_error("Trade failed")
+
+    async def handle_chat_message(self, data):
+        """Handle PK-style chat (local or global)"""
+        try:
+            # Rate limit chat: 1 message per second per connection
+            if not self._rate_ok('chat', 1.0):
+                await self.send_error("You're sending messages too quickly.")
+                return
+            message = data.get('message', '').strip()
+            chat_type = data.get('chat_type', 'local')
+
+            if not message or len(message) > 200:
+                await self.send_error("Invalid message")
+                return
+
+            chat_data = {
+                'type': 'chat_message',
+                'message': message,
+                'character_name': self.character.name,
+                'character_id': str(self.character.id),
+                'chat_type': chat_type,
+                'timestamp': self.get_current_timestamp()
+            }
+
+            if chat_type == 'local':
+                await self.channel_layer.group_send(self.location_group, chat_data)
+            elif chat_type == 'global':
+                await self.channel_layer.group_send("global_chat", chat_data)
+
+        except Exception as e:
+            logger.error(f"Chat message error: {e}")
+            await self.send_error("Chat failed")
+
+    async def send_pong(self):
+        """Respond to ping"""
+        try:
+            await self._regen_stamina()
+        except Exception:
+            pass
+        await self.send(text_data=json.dumps({
+            'type': 'pong',
+            'timestamp': self.get_current_timestamp()
+        }))
+
+    @database_sync_to_async
+    def _regen_stamina(self):
+        from .services import stamina as stam
+        try:
+            stam.regen_stamina(self.character)
+        except Exception:
+            pass
+
+    async def handle_jump_to_flag(self, data):
+        """Handle Jump to Flag travel request"""
+        try:
+            # Throttle jump requests to 1 per second
+            if not self._rate_ok('jump', 1.0):
+                await self.send_error('Please wait before jumping again')
+                return
+            flag_id = data.get('flag_id')
+            if not flag_id:
+                await self.send_error('flag_id required')
+                return
+            result = await self._jump_to_flag_db(flag_id)
+            await self.send(text_data=json.dumps({
+                'type': 'jump_to_flag',
+                'result': result
+            }))
+            # Push HUD/character update
+            try:
+                await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Jump to flag error: {e}")
+            await self.send_error('Jump failed')
+
+    async def send_error(self, message):
+        """Send error to client"""
+        await self.send(text_data=json.dumps({
+            'type': 'error',
+            'message': message
+        }))
+
+    # WebSocket event handlers
+    async def player_moved(self, event):
+        """Send player movement update"""
+        if str(self.character.id) != event['character_id']:
+            await self.send(text_data=json.dumps({
+                'type': 'player_movement',
+                'character_id': event['character_id'],
+                'character_name': event['character_name'],
+                'lat': event['lat'],
+                'lon': event['lon'],
+            }))
+
+    async def trade_offer(self, event):
+        """Forward trade offer to client"""
+        await self.send(text_data=json.dumps({
+            'type': 'trade_offer',
+            'trade_id': event['trade_id'],
+            'from_character': event['from_character'],
+            'items': event['items']
+        }))
+
+    async def chat_message(self, event):
+        """Send chat message to client"""
+        await self.send(text_data=json.dumps({
+            'type': 'chat_message',
+            'message': event['message'],
+            'character_name': event['character_name'],
+            'character_id': event['character_id'],
+            'chat_type': event['chat_type'],
+            'timestamp': event['timestamp']
+        }))
+
+    async def notification(self, event):
+        """Send notification to client"""
+        await self.send(text_data=json.dumps({
+            'type': 'notification',
+            'title': event.get('title', 'Notification'),
+            'message': event['message'],
+            'notification_type': event.get('notification_type', 'info')
+        }))
+
+    async def character_update(self, event):
+        """Push a fresh HUD snapshot to the connected client.
+        Triggered by group_send(..., {'type': 'character_update'})
+        """
+        try:
+            snap = await self._character_hud_snapshot()
+            await self.send(text_data=json.dumps({'type': 'character_update', 'data': snap}))
+        except Exception as e:
+            logger.error(f"character_update send failed: {e}")
+
+    # Database helper methods
+    @database_sync_to_async
+    def get_character(self, user):
+        """Get character for user"""
+        try:
+            from .models import Character
+            return Character.objects.get(user=user)
+        except Exception:
+            return None
+
+    @database_sync_to_async
+    def _validate_and_move(self, character_id, new_lat, new_lon):
+        """Validate territory rules, consume stamina, and update position."""
+        from .models import Character
+        from .services.movement import ensure_in_territory, haversine_m
+        from .services import stamina as stam
+        from .services.movement import MovementError
+        ch = Character.objects.get(id=character_id)
+        # Territory check
+        ensure_in_territory(ch, float(new_lat), float(new_lon))
+        # Stamina cost for movement
+        dist_m = haversine_m(float(ch.lat), float(ch.lon), float(new_lat), float(new_lon))
+        cost = stam.movement_stamina_cost(dist_m)
+        if not stam.consume_stamina(ch, cost):
+            raise MovementError('exhausted', 'Insufficient stamina for movement')
+        old_lat, old_lon = ch.lat, ch.lon
+        ch.lat = float(new_lat)
+        ch.lon = float(new_lon)
+        ch.save(update_fields=['lat', 'lon'])
+        return old_lat, old_lon
+
+    @database_sync_to_async
+    def update_character_online_status(self, character_id, is_online):
+        """Update character online status"""
+        try:
+            from .models import Character
+            character = Character.objects.get(id=character_id)
+            character.is_online = is_online
+            character.save(update_fields=['is_online', 'last_activity'])
+            return True
+        except Exception:
+            return False
+
+    @database_sync_to_async
+    def create_trade(self, initiator_id, target_id, items):
+        """Create a trade offer (minimal row using existing Trade model)."""
+        try:
+            from .models import Trade, Character
+            # ensure recipient exists
+            Character.objects.get(id=target_id)
+            trade = Trade.objects.create(
+                initiator_id=initiator_id,
+                recipient_id=target_id,
+            )
+            return trade.id
+        except Exception:
+            return None
 
     async def start_combat_loop(self, event):
-        """Group-triggered event from HTTP view to start server-driven PvE loop."""
+        """Start PK-style simplified combat loop using model turn interval."""
         try:
-            combat_id = event.get('combat_id') if isinstance(event, dict) else None
+            combat_id = event.get('combat_id')
             if not combat_id:
                 return
-            # Cancel any existing loop
             await self.stop_combat_loop()
             self._combat_id = combat_id
-            # Send initial snapshot
             snap = await self._get_combat_snapshot(combat_id)
             if snap:
                 await self.send(text_data=json.dumps({'type': 'combat_start', 'combat': snap}))
-            # Spawn loop task
             self._combat_task = asyncio.create_task(self._run_pve_loop(combat_id))
         except Exception as e:
-            logger.error(f"start_combat_loop error: {e}")
+            logger.error(f"Start combat loop error: {e}")
 
     async def stop_combat_loop(self, *args, **kwargs):
+        """Stop combat loop"""
         try:
             task = getattr(self, '_combat_task', None)
             if task and not task.done():
@@ -575,26 +426,21 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             self._combat_id = None
 
     async def _run_pve_loop(self, combat_id: str):
-        """Server-driven combat: resolves a turn every configured interval (default ~2s) until end."""
+        """Run combat loop at the session interval (fallback 2s)."""
         try:
             while True:
-                # Resolve one turn in DB
                 result = await self._resolve_turn_and_snapshot(combat_id)
                 if not result:
-                    # Combat missing; end silently
                     break
                 await self.send(text_data=json.dumps({'type': 'combat_update', 'combat': result}))
-                # If ended, dispatch end message and push character update
                 status = (result.get('status') or '').lower()
                 if status in ('victory', 'defeat', 'fled'):
                     await self.send(text_data=json.dumps({'type': 'combat_end', 'combat': result}))
-                    # Push HUD refresh for character via group
                     try:
                         await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
                     except Exception:
                         pass
                     break
-                # Sleep per-turn interval from snapshot (fallback 2s)
                 try:
                     interval = int(result.get('interval', 2) or 2)
                 except Exception:
@@ -603,20 +449,20 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"combat loop error: {e}")
+            logger.error(f"Combat loop error: {e}")
 
     @database_sync_to_async
     def _ensure_pve_combat(self, monster_id: str):
+        """Start combat if within configured range (default 50m)."""
         try:
             from .models import Character, Monster, PvECombat
             ch = Character.objects.get(id=self.character.id)
             m = Monster.objects.get(id=monster_id, is_alive=True)
-            # Refuse if already in combat
             if ch.in_combat or m.in_combat:
                 return None
-            # Range check (approx 50m)
             dist = ch.distance_to(m.lat, m.lon)
-            if dist > 50:
+            max_range_m = int(getattr(settings, 'PVE_COMBAT_RANGE_M', 50))
+            if dist > max_range_m:
                 return None
             combat = PvECombat.objects.create(
                 character=ch,
@@ -635,6 +481,7 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _get_combat_snapshot(self, combat_id: str):
+        """Get combat snapshot using model interval."""
         try:
             from .models import PvECombat
             c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
@@ -655,28 +502,34 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _resolve_turn_and_snapshot(self, combat_id: str):
+        """Resolve one combat turn via PvECombat.resolve_turn with fallback.
+        Also returns a concise 'message' summarizing the turn for UI logs.
+        """
         try:
             from .models import PvECombat
             c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
-            # If not active, return snapshot
+            interval = getattr(c, 'turn_interval_seconds', 2) or 2
+            # If not active, just echo state
             if c.status != 'active':
                 return {
                     'id': str(c.id),
                     'status': c.status,
                     'character_hp': c.character_hp,
                     'monster_hp': c.monster_hp,
-                    'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                    'interval': interval,
                     'enemy': {
                         'name': c.monster.template.name,
                         'level': c.monster.template.level,
                         'max_hp': c.monster.max_hp,
                     }
                 }
-            # Resolve one turn using model logic
+            # Capture pre-turn HPs for delta-based message
+            prev_ch_hp, prev_m_hp = int(c.character_hp), int(c.monster_hp)
+            msg = None
             try:
-                _ = c.resolve_turn()
+                c.resolve_turn()
             except Exception:
-                # Fallback: trivial resolution
+                # Fallback simple resolution
                 import random
                 dmg = max(1, c.character.strength - c.monster.template.defense + random.randint(-3, 3))
                 c.monster_hp = max(0, c.monster_hp - dmg)
@@ -689,19 +542,235 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                         c.end_combat('defeat')
                     else:
                         c.save()
-            # Re-fetch after resolution for fresh snapshot
             c.refresh_from_db()
+            # Compute deltas
+            d_m = max(0, prev_m_hp - int(c.monster_hp))
+            d_c = max(0, prev_ch_hp - int(c.character_hp))
+            enemy_name = getattr(getattr(c, 'monster', None), 'template', None).name if getattr(getattr(c, 'monster', None), 'template', None) else 'Enemy'
+            if c.status == 'active':
+                if d_m > 0 and d_c > 0:
+                    msg = f"You hit {enemy_name} for {d_m}. {enemy_name} hit you for {d_c}."
+                elif d_m == 0 and d_c > 0:
+                    msg = f"You are exhausted and couldn't attack. {enemy_name} hit you for {d_c}."
+                elif d_m > 0 and d_c == 0:
+                    msg = f"You hit {enemy_name} for {d_m}."
+            elif c.status == 'victory':
+                if d_m > 0:
+                    msg = f"You dealt {d_m} and defeated {enemy_name}!"
+                else:
+                    msg = f"{enemy_name} defeated!"
+            elif c.status == 'defeat':
+                if d_c > 0:
+                    msg = f"{enemy_name} hit you for {d_c}. You are downed."
+                else:
+                    msg = f"You are downed."
             return {
                 'id': str(c.id),
                 'status': c.status,
                 'character_hp': c.character_hp,
                 'monster_hp': c.monster_hp,
-                'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                'interval': interval,
                 'enemy': {
                     'name': c.monster.template.name,
                     'level': c.monster.template.level,
                     'max_hp': c.monster.max_hp,
-                }
+                },
+                'message': msg,
             }
         except Exception:
             return None
+
+    async def send_nearby_data(self):
+        """Send nearby players, monsters, and resources"""
+        nearby_data = await self.get_nearby_data(self.character.id)
+        if nearby_data:
+            await self.send(text_data=json.dumps({
+                'type': 'nearby_data',
+                'data': nearby_data
+            }))
+
+    @database_sync_to_async
+    def get_nearby_data(self, character_id):
+        """Get nearby entities (≈50m for players, ≈20m for monsters/resources)."""
+        try:
+            from .models import Character, Monster, ResourceNode
+            character = Character.objects.get(id=character_id)
+
+            # Nearby players (~50m)
+            lat_range = 0.00045
+            lon_range = 0.00045
+            nearby_players = Character.objects.filter(
+                lat__gte=character.lat - lat_range,
+                lat__lte=character.lat + lat_range,
+                lon__gte=character.lon - lon_range,
+                lon__lte=character.lon + lon_range,
+                is_online=True
+            ).exclude(id=character.id)[:20]
+
+            # Nearby monsters/resources (~20m)
+            lat_r = 0.00018
+            lon_r = 0.00018
+            nearby_monsters = Monster.objects.filter(
+                lat__gte=character.lat - lat_r,
+                lat__lte=character.lat + lat_r,
+                lon__gte=character.lon - lon_r,
+                lon__lte=character.lon + lon_r,
+                is_alive=True
+            ).select_related('template')[:10]
+
+            nearby_resources = ResourceNode.objects.filter(
+                lat__gte=character.lat - lat_r,
+                lat__lte=character.lat + lat_r,
+                lon__gte=character.lon - lon_r,
+                lon__lte=character.lon + lon_r,
+                is_depleted=False
+            )[:10]
+
+            return {
+                'players': [
+                    {
+                        'id': str(p.id),
+                        'name': p.name,
+                        'level': p.level,
+                        'lat': p.lat,
+                        'lon': p.lon
+                    } for p in nearby_players
+                ],
+                'monsters': [
+                    {
+                        'id': str(m.id),
+                        'name': m.template.name,
+                        'level': m.template.level,
+                        'lat': m.lat,
+                        'lon': m.lon,
+                        'current_hp': m.current_hp,
+                        'max_hp': m.max_hp
+                    } for m in nearby_monsters
+                ],
+                'resources': [
+                    {
+                        'id': str(r.id),
+                        'type': r.resource_type,
+                        'lat': r.lat,
+                        'lon': r.lon,
+                        'quantity': r.quantity
+                    } for r in nearby_resources
+                ]
+            }
+        except Exception:
+            return {'players': [], 'monsters': [], 'resources': []}
+
+    def get_current_timestamp(self):
+        """Get current timestamp"""
+        return timezone.now().isoformat()
+
+    def _rate_ok(self, key: str, interval_s: float) -> bool:
+        """Simple per-connection rate limiter. Returns True if allowed."""
+        try:
+            now = time.monotonic()
+            last = self._rl.get(key)
+            if last is not None and (now - last) < float(interval_s):
+                return False
+            self._rl[key] = now
+            return True
+        except Exception:
+            return True
+
+    @database_sync_to_async
+    def _character_hud_snapshot(self) -> dict:
+        """Return a concise HUD snapshot of the current character.
+        Includes gold, HP/mana/stamina, XP progress, position, and jump cooldown remaining.
+        """
+        try:
+            from .models import Character
+            from django.utils import timezone as _tz
+            ch = Character.objects.get(id=self.character.id)
+            xp_needed = int(ch.experience_needed_for_next_level())
+            xp_to_next = max(0, xp_needed - int(ch.experience))
+            # Jump cooldown remaining
+            try:
+                cooldown_s = int(getattr(settings, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
+            except Exception:
+                cooldown_s = 60
+            remaining = 0
+            if getattr(ch, 'last_jump_at', None):
+                elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
+                if elapsed < cooldown_s:
+                    remaining = max(0, int(cooldown_s - elapsed))
+            return {
+                'level': int(ch.level),
+                'experience': int(ch.experience),
+                'experience_to_next': int(xp_to_next),
+                'health': int(ch.current_hp),
+                'max_health': int(ch.max_hp),
+                'mana': int(ch.current_mana),
+                'max_mana': int(ch.max_mana),
+                'stamina': int(ch.current_stamina),
+                'max_stamina': int(ch.max_stamina),
+                'gold': int(ch.gold),
+                'lat': float(ch.lat),
+                'lon': float(ch.lon),
+                'can_jump': remaining == 0,
+                'jump_cooldown_remaining_s': int(remaining),
+                'downed_at': ch.downed_at.isoformat() if ch.downed_at else None,
+                'respawn_available_at': ch.respawn_available_at.isoformat() if ch.respawn_available_at else None,
+            }
+        except Exception:
+            return {}
+
+    @database_sync_to_async
+    def _jump_to_flag_db(self, flag_id: str):
+        """Perform jump using travel service; returns a serializable dict.
+        Formats TravelError into {success: False, error, seconds_remaining?}.
+        """
+        from .services.travel import jump_to_flag, TravelError
+        try:
+            res = jump_to_flag(self.scope.get('user'), flag_id)
+            return {'success': True, 'location': res.get('location')}
+        except TravelError as te:
+            # If cooldown, compute remaining seconds
+            seconds_remaining = None
+            try:
+                from django.utils import timezone as _tz
+                from django.conf import settings as _st
+                cooldown_s = int(getattr(_st, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
+                ch = self.character
+                if getattr(ch, 'last_jump_at', None):
+                    elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
+                    if elapsed < cooldown_s:
+                        seconds_remaining = max(0, int(cooldown_s - elapsed))
+            except Exception:
+                seconds_remaining = None
+            out = {'success': False, 'error': te.code}
+            if seconds_remaining is not None:
+                out['seconds_remaining'] = seconds_remaining
+            return out
+
+    async def handle_collect_flag_revenue(self, data):
+        """Collect uncollected revenue from a flag owned by the player."""
+        try:
+            flag_id = data.get('flag_id')
+            if not flag_id:
+                await self.send_error('flag_id required')
+                return
+            res = await self._collect_flag_revenue_db(flag_id)
+            await self.send(text_data=json.dumps({'type': 'collect_flag_revenue', 'result': res}))
+            try:
+                await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Collect revenue error: {e}")
+            await self.send_error('Collect failed')
+
+    @database_sync_to_async
+    def _collect_flag_revenue_db(self, flag_id: str):
+        from .services.flags import collect_revenue, FlagError
+        try:
+            user = self.scope.get('user')
+            out = collect_revenue(user, flag_id)
+            return {'success': True, **out}
+        except FlagError as fe:
+            return {'success': False, 'error': fe.code}
+        except Exception:
+            return {'success': False, 'error': 'server_error'}
