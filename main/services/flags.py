@@ -262,6 +262,13 @@ def attack_flag(user: User, flag_id: str, at_lat: float, at_lon: float, damage: 
 
     flag.save(update_fields=['hp_current', 'status', 'capture_window_ends_at', 'updated_at'])
 
+    # Log attack event for attacker
+    try:
+        from . import events as evt
+        evt.log_event(user, event_type='combat', title='Flag attacked', message=f'You dealt {before - after} damage', data={'flag_id': str(flag.id), 'hp_after': after})
+    except Exception:
+        pass
+
     return {
         'hp_before': before,
         'hp_after': after,
@@ -305,6 +312,13 @@ def capture_flag(user: User, flag_id: str, at_lat: float, at_lon: float) -> Dict
     flag.capture_window_ends_at = None
     flag.save(update_fields=['owner', 'status', 'hp_current', 'protection_ends_at', 'capture_window_ends_at', 'updated_at'])
 
+    # Log capture event for new owner
+    try:
+        from . import events as evt
+        evt.log_event(user, event_type='combat', title='Flag captured', message='You captured a flag', data={'flag_id': str(flag.id)})
+    except Exception:
+        pass
+
     return {
         'captured': True,
         'owner_id': flag.owner_id,
@@ -336,6 +350,12 @@ def collect_revenue(user: User, flag_id: str) -> Dict:
         character.gold += amount
         character.save(update_fields=['gold'])
         FlagLedger.objects.create(flag=flag, entry_type=FlagLedger.EntryType.COLLECT, amount=-amount, notes='Collected by owner')
+        # Log event and notify owner
+        try:
+            from . import events as evt
+            evt.log_event(character, event_type='loot_dropped', title='Revenue Collected', message=f'+{amount} gold from flag', data={'flag_id': str(flag.id), 'gold': amount})
+        except Exception:
+            pass
 
     return {'collected': amount, 'new_gold': character.gold}
 

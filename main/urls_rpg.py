@@ -61,6 +61,11 @@ urlpatterns = [
     # Trading API endpoints
     path('api/rpg/trade/create/', views_rpg.api_trade_create, name='api_trade_create'),
 
+    # Notifications (GameEvent) API
+    path('api/rpg/events/', views_rpg.api_events_list, name='api_events_list'),
+    path('api/rpg/events/mark-read/', views_rpg.api_events_mark_read, name='api_events_mark_read'),
+    path('api/rpg/events/mark-all-read/', views_rpg.api_events_mark_all_read, name='api_events_mark_all_read'),
+
     # Flag/NPC endpoints (FlagRun deprecated)
     path('api/rpg/flag/npcs/<uuid:flag_id>/', views_rpg.api_flag_npcs, name='api_flag_npcs'),
 
