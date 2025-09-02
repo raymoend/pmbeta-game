@@ -701,6 +701,8 @@ class PvECombat(BaseModel):
         - Enforces turn interval based on last_turn_at/turn_interval_seconds.
         - Includes weapon damage from equipped weapon.
         - Class perk: Void Sorcerer has 10% to deal 1.5x damage (Void Rift surge).
+        - Stamina gating: consume stamina for attack and defend; if attack stamina is insufficient,
+          the player skips their attack but the monster may still retaliate.
         Returns True if turn processed, False if throttled or inactive.
         """
         if self.status != 'active':
@@ -713,42 +715,59 @@ class PvECombat(BaseModel):
         if self.last_turn_at and (now - self.last_turn_at).total_seconds() < max(0, interval):
             return False  # Too soon
 
-        # Character attacks first
-        # Base damage from stats
-        base_damage = max(1, int(self.character.strength) - int(self.monster.template.defense) + random.randint(-3, 3))
-        # Add weapon damage if equipped
-        weapon_damage = 0
+        did_attack = False
+        # Character attacks first, but requires stamina
         try:
-            from .models import InventoryItem  # local import to avoid cycles
+            from .services import stamina as stam
+            atk_cost = int(stam.get_stamina_costs().get('ATTACK', 5))
+            has_stamina = stam.consume_stamina(self.character, atk_cost)
         except Exception:
-            InventoryItem = None
-        if InventoryItem is not None:
+            has_stamina = True
+        if has_stamina:
+            did_attack = True
+            # Base damage from stats
+            base_damage = max(1, int(self.character.strength) - int(self.monster.template.defense) + random.randint(-3, 3))
+            # Add weapon damage if equipped
+            weapon_damage = 0
             try:
-                weapon = InventoryItem.objects.select_related('item_template').filter(
-                    character=self.character, is_equipped=True, item_template__item_type='weapon'
-                ).first()
-                if weapon and weapon.item_template:
-                    weapon_damage = int(getattr(weapon.item_template, 'damage', 0) or 0)
+                from .models import InventoryItem  # local import to avoid cycles
             except Exception:
-                weapon_damage = 0
-        total_damage = base_damage + max(0, weapon_damage)
-        # Void Sorcerer perk: 10% surge to 1.5x
-        try:
-            if (self.character.class_type or '').lower() == 'void_sorcerer' and random.random() < 0.10:
-                total_damage = int(math.ceil(total_damage * 1.5))
-        except Exception:
-            pass
-        total_damage = max(1, int(total_damage))
-        self.monster_hp = max(0, int(self.monster_hp) - total_damage)
+                InventoryItem = None
+            if InventoryItem is not None:
+                try:
+                    weapon = InventoryItem.objects.select_related('item_template').filter(
+                        character=self.character, is_equipped=True, item_template__item_type='weapon'
+                    ).first()
+                    if weapon and weapon.item_template:
+                        weapon_damage = int(getattr(weapon.item_template, 'damage', 0) or 0)
+                except Exception:
+                    weapon_damage = 0
+            total_damage = base_damage + max(0, weapon_damage)
+            # Void Sorcerer perk: 10% surge to 1.5x
+            try:
+                if (self.character.class_type or '').lower() == 'void_sorcerer' and random.random() < 0.10:
+                    total_damage = int(math.ceil(total_damage * 1.5))
+            except Exception:
+                pass
+            total_damage = max(1, int(total_damage))
+            self.monster_hp = max(0, int(self.monster_hp) - total_damage)
 
-        if self.monster_hp <= 0:
-            self.last_turn_at = now
-            self.end_combat('victory')
-            return True
+            if self.monster_hp <= 0:
+                self.last_turn_at = now
+                self.end_combat('victory')
+                return True
 
-        # Monster counter-attacks
+        # Monster counter-attacks regardless of whether the player attacked
         retaliation = max(1, int(self.monster.template.strength) - int(self.character.defense) + random.randint(-3, 3))
         self.character_hp = max(0, int(self.character_hp) - retaliation)
+
+        # Optional defend stamina cost (does not block damage if insufficient)
+        try:
+            from .services import stamina as stam
+            def_cost = int(stam.get_stamina_costs().get('DEFEND', 2))
+            stam.consume_stamina(self.character, def_cost)
+        except Exception:
+            pass
 
         if self.character_hp <= 0:
             self.last_turn_at = now

@@ -488,23 +488,30 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _resolve_turn_and_snapshot(self, combat_id: str):
-        """Resolve one combat turn via PvECombat.resolve_turn with fallback."""
+        """Resolve one combat turn via PvECombat.resolve_turn with fallback.
+        Also returns a concise 'message' summarizing the turn for UI logs.
+        """
         try:
             from .models import PvECombat
             c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
+            interval = getattr(c, 'turn_interval_seconds', 2) or 2
+            # If not active, just echo state
             if c.status != 'active':
                 return {
                     'id': str(c.id),
                     'status': c.status,
                     'character_hp': c.character_hp,
                     'monster_hp': c.monster_hp,
-                    'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                    'interval': interval,
                     'enemy': {
                         'name': c.monster.template.name,
                         'level': c.monster.template.level,
                         'max_hp': c.monster.max_hp,
                     }
                 }
+            # Capture pre-turn HPs for delta-based message
+            prev_ch_hp, prev_m_hp = int(c.character_hp), int(c.monster_hp)
+            msg = None
             try:
                 c.resolve_turn()
             except Exception:
@@ -522,17 +529,39 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                     else:
                         c.save()
             c.refresh_from_db()
+            # Compute deltas
+            d_m = max(0, prev_m_hp - int(c.monster_hp))
+            d_c = max(0, prev_ch_hp - int(c.character_hp))
+            enemy_name = getattr(getattr(c, 'monster', None), 'template', None).name if getattr(getattr(c, 'monster', None), 'template', None) else 'Enemy'
+            if c.status == 'active':
+                if d_m > 0 and d_c > 0:
+                    msg = f"You hit {enemy_name} for {d_m}. {enemy_name} hit you for {d_c}."
+                elif d_m == 0 and d_c > 0:
+                    msg = f"You are exhausted and couldn't attack. {enemy_name} hit you for {d_c}."
+                elif d_m > 0 and d_c == 0:
+                    msg = f"You hit {enemy_name} for {d_m}."
+            elif c.status == 'victory':
+                if d_m > 0:
+                    msg = f"You dealt {d_m} and defeated {enemy_name}!"
+                else:
+                    msg = f"{enemy_name} defeated!"
+            elif c.status == 'defeat':
+                if d_c > 0:
+                    msg = f"{enemy_name} hit you for {d_c}. You are downed."
+                else:
+                    msg = f"You are downed."
             return {
                 'id': str(c.id),
                 'status': c.status,
                 'character_hp': c.character_hp,
                 'monster_hp': c.monster_hp,
-                'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                'interval': interval,
                 'enemy': {
                     'name': c.monster.template.name,
                     'level': c.monster.template.level,
                     'max_hp': c.monster.max_hp,
-                }
+                },
+                'message': msg,
             }
         except Exception:
             return None

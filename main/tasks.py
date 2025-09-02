@@ -1,4 +1,11 @@
-from celery import shared_task
+try:
+    from celery import shared_task
+except Exception:
+    # Celery optional: define a no-op decorator for test/dev without Celery installed
+    def shared_task(func=None, **kwargs):  # type: ignore
+        def wrap(f):
+            return f
+        return wrap if func is None else wrap(func)
 from django.utils import timezone
 from django.db.models import F
 from django.conf import settings
