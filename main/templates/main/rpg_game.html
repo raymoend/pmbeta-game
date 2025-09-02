@@ -10,6 +10,7 @@
     <!-- Mapbox GL JS -->
     <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
     <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    <link href="{% static 'css/game-ui.css' %}" rel="stylesheet" />
     
     <!-- Inject Mapbox token/style from server settings -->
     <script>
@@ -1057,6 +1058,13 @@
                         </div>
                     </div>
                 </div>
+            </div>
+            <!-- Floating Action Bar -->
+            <div class="action-bar" id="actionBar">
+                <button class="btn btn-success" title="Heal nearby (E)" onclick="claimEnvironmentalHeal()">🌿 Heal</button>
+                <button class="btn btn-primary" title="Use berries (H)" onclick="healWithBerries()">🍓 Berries</button>
+                <button class="btn btn-warn" title="Fight nearest (F)" onclick="fightNearest()">⚔️ Fight</button>
+                <button class="btn btn-ghost" title="Inventory (I)" onclick="showTab('inventory')">🎒 Inventory</button>
             </div>
         </div>
     </div>
@@ -3221,16 +3229,27 @@ if (dissolvedFeature) {
 
         function showMessage(text, type = 'info') {
             const messageArea = document.getElementById('messageArea');
-            const message = document.createElement('div');
-            message.className = `message ${type}`;
-            message.textContent = text;
-            
-            messageArea.appendChild(message);
-            
-            // Auto remove after 5 seconds
-            setTimeout(() => {
-                message.remove();
-            }, 5000);
+            const box = document.createElement('div');
+            box.className = `message ${type}`;
+            box.style.padding = '10px 12px';
+            box.style.display = 'flex';
+            box.style.alignItems = 'center';
+            box.style.gap = '8px';
+            const dot = document.createElement('span');
+            dot.className = 'spinner';
+            if (type === 'success') { dot.style.borderTopColor = '#16a34a'; }
+            if (type === 'error') { dot.style.borderTopColor = '#ef4444'; }
+            if (type === 'info') { dot.style.borderTopColor = '#3b82f6'; }
+            const t = document.createElement('div');
+            t.textContent = String(text || '');
+            box.appendChild(dot);
+            box.appendChild(t);
+            messageArea.appendChild(box);
+            // keep max 3 toasts
+            while (messageArea.children.length > 3) {
+                try { messageArea.removeChild(messageArea.firstChild); } catch(_) {}
+            }
+            setTimeout(() => { try { box.remove(); } catch(_){} }, 3800);
         }
 
         // Chat UI
@@ -3674,6 +3693,30 @@ if (dissolvedFeature) {
             .setLngLat([gameState.character.lon, gameState.character.lat])
             .addTo(gameState.map);
         }
+
+        // Quick actions via keyboard
+        function fightNearest() {
+            try {
+                const ms = Array.isArray(gameState.monsters) ? gameState.monsters : [];
+                if (!ms.length) { showMessage('No monsters nearby', 'info'); return; }
+                let best = null; let bestD = 1e12;
+                for (const m of ms) {
+                    const d = Number(m.distance || 1e12);
+                    if (d < bestD) { best = m; bestD = d; }
+                }
+                if (!best) { showMessage('No monsters nearby', 'info'); return; }
+                if (bestD > 50) { showMessage(`Nearest is ${Math.round(bestD)}m away (need <= 50m)`, 'error'); return; }
+                startAutoCombat(best.id);
+            } catch (e) { showMessage('Failed to engage', 'error'); }
+        }
+        document.addEventListener('keydown', (e) => {
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if (e.key === 'h' || e.key === 'H') { e.preventDefault(); healWithBerries(); }
+            if (e.key === 'e' || e.key === 'E') { e.preventDefault(); claimEnvironmentalHeal(); }
+            if (e.key === 'f' || e.key === 'F') { e.preventDefault(); fightNearest(); }
+            if (e.key === 'i' || e.key === 'I') { e.preventDefault(); showTab('inventory'); }
+        });
 
         // Initialize everything when page loads
 window.addEventListener('load', function() {
