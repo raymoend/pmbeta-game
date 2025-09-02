@@ -157,6 +157,10 @@ class Character(BaseModel):
     # PvP Settings
     pvp_enabled = models.BooleanField(default=True, help_text="Can be attacked by other players")
 
+    # Downed/respawn state (PK-style)
+    downed_at = models.DateTimeField(null=True, blank=True)
+    respawn_available_at = models.DateTimeField(null=True, blank=True)
+
     # Customization (chosen at registration only)
     class_type = models.CharField(max_length=32, choices=CLASS_CHOICES, default='cyber_warrior')
     flag_color = models.ForeignKey('main.FlagColor', on_delete=models.SET_NULL, null=True, blank=True, help_text="User's chosen flag color")
@@ -548,6 +552,8 @@ class InventoryItem(BaseModel):
     item_template = models.ForeignKey(ItemTemplate, on_delete=models.CASCADE)
     quantity = models.IntegerField(default=1)
     is_equipped = models.BooleanField(default=False)
+    # Track agility penalty applied when equipping armor so we can reverse accurately on unequip
+    agility_penalty_applied = models.IntegerField(default=0)
     
     class Meta:
         db_table = 'rpg_inventory'
@@ -667,6 +673,10 @@ class PvECombat(BaseModel):
     # Combat state
     character_hp = models.IntegerField()
     monster_hp = models.IntegerField()
+
+    # Real-time loop cadence
+    last_turn_at = models.DateTimeField(null=True, blank=True)
+    turn_interval_seconds = models.IntegerField(default=2)
     
     # Results
     experience_gained = models.IntegerField(default=0)
@@ -684,27 +694,67 @@ class PvECombat(BaseModel):
         return f"{self.character.name} vs {self.monster.template.name}"
     
     def resolve_turn(self):
-        """Resolve a combat turn"""
+        """Resolve a combat turn with server-driven pacing.
+        - Enforces turn interval based on last_turn_at/turn_interval_seconds.
+        - Includes weapon damage from equipped weapon.
+        - Class perk: Void Sorcerer has 10% to deal 1.5x damage (Void Rift surge).
+        Returns True if turn processed, False if throttled or inactive.
+        """
         if self.status != 'active':
             return False
-        
+        now = timezone.now()
+        try:
+            interval = int(self.turn_interval_seconds or 2)
+        except Exception:
+            interval = 2
+        if self.last_turn_at and (now - self.last_turn_at).total_seconds() < max(0, interval):
+            return False  # Too soon
+
         # Character attacks first
-        damage = max(1, self.character.strength - self.monster.template.defense + random.randint(-3, 3))
-        self.monster_hp -= damage
-        
+        # Base damage from stats
+        base_damage = max(1, int(self.character.strength) - int(self.monster.template.defense) + random.randint(-3, 3))
+        # Add weapon damage if equipped
+        weapon_damage = 0
+        try:
+            from .models import InventoryItem  # local import to avoid cycles
+        except Exception:
+            InventoryItem = None
+        if InventoryItem is not None:
+            try:
+                weapon = InventoryItem.objects.select_related('item_template').filter(
+                    character=self.character, is_equipped=True, item_template__item_type='weapon'
+                ).first()
+                if weapon and weapon.item_template:
+                    weapon_damage = int(getattr(weapon.item_template, 'damage', 0) or 0)
+            except Exception:
+                weapon_damage = 0
+        total_damage = base_damage + max(0, weapon_damage)
+        # Void Sorcerer perk: 10% surge to 1.5x
+        try:
+            if (self.character.class_type or '').lower() == 'void_sorcerer' and random.random() < 0.10:
+                total_damage = int(math.ceil(total_damage * 1.5))
+        except Exception:
+            pass
+        total_damage = max(1, int(total_damage))
+        self.monster_hp = max(0, int(self.monster_hp) - total_damage)
+
         if self.monster_hp <= 0:
+            self.last_turn_at = now
             self.end_combat('victory')
             return True
-        
+
         # Monster counter-attacks
-        damage = max(1, self.monster.template.strength - self.character.defense + random.randint(-3, 3))
-        self.character_hp -= damage
-        
+        retaliation = max(1, int(self.monster.template.strength) - int(self.character.defense) + random.randint(-3, 3))
+        self.character_hp = max(0, int(self.character_hp) - retaliation)
+
         if self.character_hp <= 0:
+            self.last_turn_at = now
             self.end_combat('defeat')
             return True
-        
-        self.save()
+
+        # Persist tick timestamp and HP
+        self.last_turn_at = now
+        self.save(update_fields=['character_hp', 'monster_hp', 'last_turn_at', 'updated_at'])
         return True
     
     def generate_loot_drops(self):
@@ -727,8 +777,14 @@ class PvECombat(BaseModel):
                     item_name, qty, prob = None, 0, 0.0
                 if not item_name or qty <= 0:
                     continue
+                # Scale quantity by monster level (roughly +1 per 5 levels)
+                try:
+                    lvl = int(getattr(self.monster.template, 'level', 1) or 1)
+                except Exception:
+                    lvl = 1
+                scaled_qty = max(1, int(round(qty * max(1.0, lvl / 5.0))))
                 if random.random() < max(0.0, min(1.0, prob)):
-                    loot.append({'name': item_name, 'quantity': qty})
+                    loot.append({'name': item_name, 'quantity': scaled_qty})
             return loot
 
         # Themed fallback drops (mafia–alien). Skewed by level.
@@ -774,8 +830,13 @@ class PvECombat(BaseModel):
             self.monster.die()
         
         elif result == 'defeat':
-            # Character loses, goes to 1 HP
-            self.character.current_hp = 1
+            # Character loses; set to 1 HP and schedule respawn cooldown
+            try:
+                self.character.current_hp = 1
+                self.character.downed_at = timezone.now()
+                self.character.respawn_available_at = self.character.downed_at + timedelta(seconds=15)
+            except Exception:
+                self.character.current_hp = 1
             self.character.save()
         
         # End combat state
@@ -1311,6 +1372,29 @@ class ResourceHarvest(BaseModel):
     
     def __str__(self):
         return f"{self.character.name} harvesting {self.resource.get_resource_type_display()} ({self.status})"
+
+
+class HealingClaim(BaseModel):
+    """Exclusive healing claim on a ResourceNode within proximity.
+    Grants 5 HP/sec up to 30 seconds while the claimant remains within 5 meters.
+    """
+    character = models.ForeignKey(Character, on_delete=models.CASCADE, related_name='healing_claims')
+    resource = models.ForeignKey(ResourceNode, on_delete=models.CASCADE, related_name='healing_claims')
+    active = models.BooleanField(default=True)
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    last_tick_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'rpg_healing_claims'
+        indexes = [
+            models.Index(fields=['resource', 'active']),
+            models.Index(fields=['character', 'active']),
+        ]
+
+    def __str__(self):
+        return f"HealClaim {str(self.id)[:8]} {self.character.name} @ {self.resource.get_resource_type_display()} ({'active' if self.active else 'ended'})"
 
 
 # ===============================

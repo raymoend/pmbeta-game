@@ -6,6 +6,7 @@ import json
 import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,11 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.handle_player_movement(data)
             elif message_type == 'combat_action':
                 await self.handle_combat_action(data)
+            elif message_type == 'start_combat':
+                # Client-initiated start (optional; usually the HTTP API will trigger a group event)
+                await self.handle_start_combat(data)
+            elif message_type == 'stop_combat':
+                await self.stop_combat_loop()
             elif message_type == 'chat_message':
                 await self.handle_chat_message(data)
             elif message_type == 'request_nearby_data':
@@ -168,7 +174,7 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Missing combat data")
                 return
             
-            # Process combat action
+            # Process combat action (manual actions like 'flee' supported; 'attack' usually handled by loop)
             result = await self.process_combat_action(combat_id, action_type)
             
             if result:
@@ -517,3 +523,185 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         """Get current timestamp"""
         from django.utils import timezone
         return timezone.now().isoformat()
+
+    # --- PK-style auto-combat loop ---
+    async def handle_start_combat(self, data):
+        """Optional client message to initiate a combat loop (monster_id required)."""
+        try:
+            monster_id = data.get('monster_id')
+            if not monster_id:
+                await self.send_error('monster_id required')
+                return
+            combat_id = await self._ensure_pve_combat(monster_id)
+            if not combat_id:
+                await self.send_error('Failed to start combat')
+                return
+            await self.start_combat_loop({'combat_id': combat_id})
+        except Exception as e:
+            logger.error(f"start_combat error: {e}")
+            await self.send_error('start_combat failed')
+
+    async def start_combat_loop(self, event):
+        """Group-triggered event from HTTP view to start server-driven PvE loop."""
+        try:
+            combat_id = event.get('combat_id') if isinstance(event, dict) else None
+            if not combat_id:
+                return
+            # Cancel any existing loop
+            await self.stop_combat_loop()
+            self._combat_id = combat_id
+            # Send initial snapshot
+            snap = await self._get_combat_snapshot(combat_id)
+            if snap:
+                await self.send(text_data=json.dumps({'type': 'combat_start', 'combat': snap}))
+            # Spawn loop task
+            self._combat_task = asyncio.create_task(self._run_pve_loop(combat_id))
+        except Exception as e:
+            logger.error(f"start_combat_loop error: {e}")
+
+    async def stop_combat_loop(self, *args, **kwargs):
+        try:
+            task = getattr(self, '_combat_task', None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            self._combat_task = None
+            self._combat_id = None
+
+    async def _run_pve_loop(self, combat_id: str):
+        """Server-driven combat: resolves a turn every configured interval (default ~2s) until end."""
+        try:
+            while True:
+                # Resolve one turn in DB
+                result = await self._resolve_turn_and_snapshot(combat_id)
+                if not result:
+                    # Combat missing; end silently
+                    break
+                await self.send(text_data=json.dumps({'type': 'combat_update', 'combat': result}))
+                # If ended, dispatch end message and push character update
+                status = (result.get('status') or '').lower()
+                if status in ('victory', 'defeat', 'fled'):
+                    await self.send(text_data=json.dumps({'type': 'combat_end', 'combat': result}))
+                    # Push HUD refresh for character via group
+                    try:
+                        await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
+                    except Exception:
+                        pass
+                    break
+                # Sleep per-turn interval from snapshot (fallback 2s)
+                try:
+                    interval = int(result.get('interval', 2) or 2)
+                except Exception:
+                    interval = 2
+                await asyncio.sleep(max(0.1, float(interval)))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"combat loop error: {e}")
+
+    @database_sync_to_async
+    def _ensure_pve_combat(self, monster_id: str):
+        try:
+            from .models import Character, Monster, PvECombat
+            ch = Character.objects.get(id=self.character.id)
+            m = Monster.objects.get(id=monster_id, is_alive=True)
+            # Refuse if already in combat
+            if ch.in_combat or m.in_combat:
+                return None
+            # Range check (approx 50m)
+            dist = ch.distance_to(m.lat, m.lon)
+            if dist > 50:
+                return None
+            combat = PvECombat.objects.create(
+                character=ch,
+                monster=m,
+                character_hp=ch.current_hp,
+                monster_hp=m.current_hp,
+            )
+            ch.in_combat = True
+            ch.save(update_fields=['in_combat'])
+            m.in_combat = True
+            m.current_target = ch
+            m.save(update_fields=['in_combat', 'current_target'])
+            return str(combat.id)
+        except Exception:
+            return None
+
+    @database_sync_to_async
+    def _get_combat_snapshot(self, combat_id: str):
+        try:
+            from .models import PvECombat
+            c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
+            return {
+                'id': str(c.id),
+                'status': c.status,
+                'character_hp': c.character_hp,
+                'monster_hp': c.monster_hp,
+                'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                'enemy': {
+                    'name': c.monster.template.name,
+                    'level': c.monster.template.level,
+                    'max_hp': c.monster.max_hp,
+                }
+            }
+        except Exception:
+            return None
+
+    @database_sync_to_async
+    def _resolve_turn_and_snapshot(self, combat_id: str):
+        try:
+            from .models import PvECombat
+            c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
+            # If not active, return snapshot
+            if c.status != 'active':
+                return {
+                    'id': str(c.id),
+                    'status': c.status,
+                    'character_hp': c.character_hp,
+                    'monster_hp': c.monster_hp,
+                    'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                    'enemy': {
+                        'name': c.monster.template.name,
+                        'level': c.monster.template.level,
+                        'max_hp': c.monster.max_hp,
+                    }
+                }
+            # Resolve one turn using model logic
+            try:
+                _ = c.resolve_turn()
+            except Exception:
+                # Fallback: trivial resolution
+                import random
+                dmg = max(1, c.character.strength - c.monster.template.defense + random.randint(-3, 3))
+                c.monster_hp = max(0, c.monster_hp - dmg)
+                if c.monster_hp <= 0:
+                    c.end_combat('victory')
+                else:
+                    dmg2 = max(1, c.monster.template.strength - c.character.defense + random.randint(-3, 3))
+                    c.character_hp = max(0, c.character_hp - dmg2)
+                    if c.character_hp <= 0:
+                        c.end_combat('defeat')
+                    else:
+                        c.save()
+            # Re-fetch after resolution for fresh snapshot
+            c.refresh_from_db()
+            return {
+                'id': str(c.id),
+                'status': c.status,
+                'character_hp': c.character_hp,
+                'monster_hp': c.monster_hp,
+                'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                'enemy': {
+                    'name': c.monster.template.name,
+                    'level': c.monster.template.level,
+                    'max_hp': c.monster.max_hp,
+                }
+            }
+        except Exception:
+            return None

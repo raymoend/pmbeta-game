@@ -921,6 +921,10 @@
                         <h3>Inventory</h3>
                         <div style="display:flex; gap:8px; margin:8px 0 12px;">
                             <button id="heal-berries-btn" class="btn" style="background:#22c55e;color:white;" onclick="healWithBerries()">🍓 Heal with berries</button>
+                            <button id="heal-environment-btn" class="btn" style="background:#16a34a;color:white;" onclick="claimEnvironmentalHeal()">🌿 Heal nearby</button>
+                        </div>
+                        <div id="envHealStatus" style="display:none; color:#a7f3d0; font-size:0.85rem; margin: -6px 0 10px;">
+                            🌿 Healing in progress: +5 HP/s • <span id="envHealSeconds">30</span>s left
                         </div>
                         <div class="inventory-grid" id="inventoryGrid">
                             <!-- Inventory slots will be populated by JavaScript -->
@@ -1136,6 +1140,18 @@
                 </button>
             </div>
         </div>
+    </div>
+
+    <!-- Respawn Overlay -->
+    <div class="combat-modal" id="respawnModal" style="display: none;">
+      <div class="combat-container" style="max-width: 420px; text-align:center;">
+        <div class="combat-title">You are down</div>
+        <div style="color:#e5e7eb; margin: 8px 0 14px;">Respawn available in <span id="respawnCountdown">15</span> seconds</div>
+        <div style="display:flex; gap:10px; justify-content:center;">
+          <button class="btn btn-large" id="respawnNowBtn" style="background:#2563eb;color:white;" onclick="performRespawn()" disabled>Respawn now</button>
+          <button class="btn btn-large btn-defend" onclick="closeRespawnModal()" style="background:#6b7280;">Close</button>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -2338,6 +2354,177 @@ if (dissolvedFeature) {
             }
         }
 
+        // Environmental healing: claim + ticker UI
+        let envHealInterval = null;
+        function updateEnvHealStatus(secondsRemaining) {
+            const cont = document.getElementById('envHealStatus');
+            const sec = document.getElementById('envHealSeconds');
+            if (!cont || !sec) return;
+            if (secondsRemaining != null) {
+                try { sec.textContent = Math.max(0, Math.floor(Number(secondsRemaining || 0))); } catch(_) {}
+            }
+            cont.style.display = 'block';
+        }
+        function hideEnvHealStatus() {
+            const cont = document.getElementById('envHealStatus');
+            if (cont) cont.style.display = 'none';
+            if (envHealInterval) { try { clearInterval(envHealInterval); } catch(_) {} envHealInterval = null; }
+        }
+        async function claimEnvironmentalHeal(resourceId=null) {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const body = resourceId ? { resource_id: resourceId } : {};
+                const res = await fetch('/api/rpg/combat/heal/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) {
+                    if (data && data.error === 'healing_source_in_use') {
+                        showMessage('Healing source is in use by another player.', 'error');
+                    } else if (data && data.error === 'no_healing_source_nearby') {
+                        showMessage('No healing source within 5m.', 'error');
+                    } else if (data && data.error === 'too_far') {
+                        showMessage('Move closer to the healing source (<= 5m).', 'error');
+                    } else {
+                        showMessage((data && data.error) || 'Healing failed', 'error');
+                    }
+                    return;
+                }
+                if (typeof data.current_hp === 'number') {
+                    gameState.character.current_hp = data.current_hp;
+                    updateCharacterStats(gameState.character);
+                }
+                if (data.claim_active) {
+                    updateEnvHealStatus(data.seconds_remaining || 0);
+                    if (!envHealInterval) {
+                        envHealInterval = setInterval(async () => {
+                            try {
+                                const res2 = await fetch('/api/rpg/combat/heal/', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                                    credentials: 'same-origin',
+                                    body: JSON.stringify({})
+                                });
+                                const d2 = await res2.json().catch(()=>({success:false}));
+                                if (!res2.ok || d2.success === false) {
+                                    hideEnvHealStatus();
+                                    if (d2 && (d2.error === 'moved_out_of_range' || d2.error === 'resource_not_found')) {
+                                        showMessage('Healing stopped.', 'info');
+                                    }
+                                    return;
+                                }
+                                if (typeof d2.current_hp === 'number') {
+                                    gameState.character.current_hp = d2.current_hp;
+                                    updateCharacterStats(gameState.character);
+                                }
+                                if (d2.claim_active && typeof d2.seconds_remaining === 'number') {
+                                    updateEnvHealStatus(d2.seconds_remaining);
+                                } else {
+                                    hideEnvHealStatus();
+                                }
+                            } catch (_) {
+                                hideEnvHealStatus();
+                            }
+                        }, 1000);
+                    }
+                    showMessage('Environmental healing active (+5 HP/s)', 'success');
+                } else {
+                    hideEnvHealStatus();
+                    showMessage('Healing ended', 'info');
+                }
+            } catch (e) {
+                console.warn('claimEnvironmentalHeal error', e);
+                showMessage('Healing failed', 'error');
+            }
+        }
+
+        // Respawn overlay logic
+        let respawnInterval = null;
+        function startRespawnOverlay(characterMaybe) {
+            try {
+                let seconds = 0;
+                if (characterMaybe && characterMaybe.respawn_available_at) {
+                    const at = Date.parse(characterMaybe.respawn_available_at);
+                    if (!isNaN(at)) {
+                        seconds = Math.max(0, Math.ceil((at - Date.now())/1000));
+                    }
+                }
+                openRespawnModal(seconds || 15);
+            } catch(_) {
+                openRespawnModal(15);
+            }
+        }
+        function openRespawnModal(secondsRemaining) {
+            const modal = document.getElementById('respawnModal');
+            const countdown = document.getElementById('respawnCountdown');
+            const btn = document.getElementById('respawnNowBtn');
+            if (!modal || !countdown || !btn) return;
+            modal.style.display = 'flex';
+            let left = Math.max(0, Math.floor(Number(secondsRemaining || 0)));
+            countdown.textContent = left;
+            btn.disabled = left > 0;
+            if (respawnInterval) { try { clearInterval(respawnInterval); } catch(_) {} }
+            respawnInterval = setInterval(() => {
+                left = Math.max(0, left - 1);
+                countdown.textContent = left;
+                btn.disabled = left > 0;
+                if (left <= 0) { try { clearInterval(respawnInterval); } catch(_) {} respawnInterval = null; }
+            }, 1000);
+        }
+        function closeRespawnModal() {
+            const modal = document.getElementById('respawnModal');
+            if (modal) modal.style.display = 'none';
+            if (respawnInterval) { try { clearInterval(respawnInterval); } catch(_) {} respawnInterval = null; }
+        }
+        async function performRespawn() {
+            try {
+                const geo = await new Promise((resolve) => {
+                    if (!navigator.geolocation) return resolve(null);
+                    try {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+                            () => resolve(null),
+                            { enableHighAccuracy: true, timeout: 4000 }
+                        );
+                    } catch(_) { resolve(null); }
+                });
+                const payload = geo ? { lat: geo.lat, lon: geo.lon } : {};
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const res = await fetch('/api/rpg/character/respawn/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || !data.success) {
+                    const seconds = (data && (data.seconds_remaining || (data.data && data.data.seconds_remaining))) || 0;
+                    if (res.status === 429 || (data && data.error === 'respawn_cooldown')) {
+                        openRespawnModal(seconds || 1);
+                        return;
+                    }
+                    showMessage((data && data.error) || 'Respawn failed', 'error');
+                    return;
+                }
+                closeRespawnModal();
+                if (data.location) {
+                    gameState.character.lat = data.location.lat;
+                    gameState.character.lon = data.location.lon;
+                    if (playerMarker) playerMarker.setLngLat([gameState.character.lon, gameState.character.lat]);
+                    try { gameState.map.setCenter([gameState.character.lon, gameState.character.lat]); } catch(_) {}
+                }
+                if (data.character) updateCharacterStats(data.character);
+                showMessage('Respawned with full health.', 'success');
+                try { loadGameData(); } catch(_) {}
+            } catch (e) {
+                console.warn('performRespawn error', e);
+                showMessage('Respawn failed', 'error');
+            }
+        }
+
         function getItemIcon(item) {
             const name = (item?.item?.name || '').toLowerCase();
             const type = (item?.item?.item_type || '').toLowerCase();
@@ -2502,7 +2689,7 @@ if (dissolvedFeature) {
                         if (c) {
                             gameState.activeCombat = c;
                             createHpTicker(c);
-                            startAutoLoopForActiveCombat();
+                            try { if (c?.enemy?.name) addCombatLog(`Combat started with ${c.enemy.name}`); } catch(_) {}
                             showMessage('Combat started!', 'error');
                         }
                     } catch (_) {}
@@ -2514,11 +2701,19 @@ if (dissolvedFeature) {
                             gameState.activeCombat = c;
                             updateHpTicker(c);
                         }
+                        if (data.message) { try { addCombatLog(data.message); } catch(_) {} }
                     } catch(_) {}
                     break;
                 case 'combat_end':
                     try { stopAutoCombat(); } catch(_) {}
-                    showMessage('Combat ended.', 'info');
+                    try { gameState.activeCombat = null; } catch(_) {}
+                    try {
+                        if (data.character) updateCharacterStats(data.character);
+                        const msg = data.message || (data.victory ? 'Victory!' : (data.defeat ? 'Defeated.' : 'Combat ended.'));
+                        showMessage(msg, data.victory ? 'success' : (data.defeat ? 'error' : 'info'));
+                        if (data.victory) { try { showVictoryPopup(data); } catch(_) {} }
+                        if (data.defeat) { try { startRespawnOverlay(data.character || {}); } catch(_) {} }
+                    } catch(_) {}
                     break;
                 case 'level_up':
                     showMessage(`Level up! You are now level ${data.level}!`, 'success');
@@ -2547,6 +2742,16 @@ if (dissolvedFeature) {
                         if (typeof p.gold === 'number') ch.gold = p.gold;
                         updateCharacterStats(Object.assign({}, gameState.character, ch));
                         if (gameState.activeCombat) { try { updateHpTicker(gameState.activeCombat); } catch(_){} }
+                        try {
+                            if (p && p.respawn_available_at) {
+                                const t = Date.parse(p.respawn_available_at);
+                                if (!isNaN(t) && Date.now() < t) { startRespawnOverlay({ respawn_available_at: p.respawn_available_at }); }
+                            }
+                            if (p && (p.downed_at === null || p.respawn_available_at === null)) {
+                                // Clear overlay if character recovered
+                                closeRespawnModal();
+                            }
+                        } catch(_) {}
                     } catch (_) {}
                     break;
                 case 'character':
@@ -2623,8 +2828,8 @@ if (dissolvedFeature) {
                         gameState.activeCombat = null;
                         // Update character stats
                         updateCharacterStats(data.character);
-                        // If defeat, immediately respawn at user's real location
-                        if (data.defeat) { try { handleRespawnFlow(); } catch(e) { console.warn('respawn flow failed', e); } }
+                        // If defeat, show respawn overlay with countdown
+                        if (data.defeat) { try { startRespawnOverlay(data.character || {}); } catch(e) { console.warn('respawn overlay failed', e); } }
                         // Refresh game data (also updates inventory)
                         loadGameData();
                         try { stopAutoCombat(); } catch(_) {}
@@ -2747,15 +2952,10 @@ if (dissolvedFeature) {
             gameState.hpTickerEl = null;
         }
         function startAutoLoopForActiveCombat() {
+            // Server-driven combat loop (Parallel Kingdom style): no client auto-attack.
             if (gameState.autoCombatTimer) { try { clearInterval(gameState.autoCombatTimer); } catch(_) {} gameState.autoCombatTimer = null; }
             gameState.autoCombatBusy = false;
-            gameState.autoCombatTimer = setInterval(async () => {
-                if (!gameState.activeCombat) { stopAutoCombat(); return; }
-                if (gameState.autoCombatBusy) return;
-                gameState.autoCombatBusy = true;
-                try { await combatAction('attack'); } catch(_) {}
-                gameState.autoCombatBusy = false;
-            }, 800);
+            // No client timer. Server pushes combat_update via WebSocket.
         }
 
         async function startAutoCombat(monsterId) {
@@ -2776,15 +2976,10 @@ if (dissolvedFeature) {
                 gameState.activeCombat = data.combat;
                 createHpTicker(data.combat);
                 try { addCombatLog(`Engaged ${data.combat?.enemy?.name || 'enemy'}`); } catch(_) {}
-                if (gameState.autoCombatTimer) { clearInterval(gameState.autoCombatTimer); gameState.autoCombatTimer = null; }
+                // Server now drives combat; updates will arrive via WebSocket combat_update.
+                // Ensure any client timers are cleared.
+                if (gameState.autoCombatTimer) { try { clearInterval(gameState.autoCombatTimer); } catch(_) {} gameState.autoCombatTimer = null; }
                 gameState.autoCombatBusy = false;
-                gameState.autoCombatTimer = setInterval(async () => {
-                    if (!gameState.activeCombat) { stopAutoCombat(); return; }
-                    if (gameState.autoCombatBusy) return;
-                    gameState.autoCombatBusy = true;
-                    try { await combatAction('attack'); } catch(_) {}
-                    gameState.autoCombatBusy = false;
-                }, 800);
             } catch (e) {
                 console.error('Error starting auto combat:', e);
                 showMessage('Failed to start combat', 'error');
@@ -3198,7 +3393,6 @@ if (dissolvedFeature) {
                     if (data.combat_started && data.combat) {
                         gameState.activeCombat = data.combat;
                         createHpTicker(gameState.activeCombat);
-                        startAutoLoopForActiveCombat();
                         showMessage('An aggressive monster attacks!', 'error');
                     } else {
                         // If combat ended due to leash escape, clear active combat and ticker
@@ -3328,7 +3522,6 @@ window.addEventListener('load', function() {
                 if (s && s.success && s.active && s.combat) {
                   gameState.activeCombat = s.combat;
                   createHpTicker(s.combat);
-                  startAutoLoopForActiveCombat();
                   showMessage('Resumed active combat.', 'info');
                 }
               })

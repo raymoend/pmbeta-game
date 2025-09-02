@@ -26,7 +26,7 @@ import math
 from .models import (
     Character, Monster, MonsterTemplate, ItemTemplate, InventoryItem,
     PvECombat, PvPCombat, Trade, TradeItem, Region, GameEvent, Skill,
-    TerritoryFlag
+    TerritoryFlag, ResourceNode, HealingClaim
 )
 
 
@@ -430,7 +430,7 @@ def api_character_respawn(request):
     """Respawn character at provided real-life coordinates with full health.
     Body: { lat?: float, lon?: float }
     If coordinates are provided and valid, the character is moved there immediately (ignoring territory restrictions).
-    Always restores HP to max. Does not restore gold; any defeat penalties remain.
+    Restores HP to max, but only after respawn cooldown if set.
     """
     try:
         character = Character.objects.get(user=request.user)
@@ -453,9 +453,20 @@ def api_character_respawn(request):
                     moved = True
             except (TypeError, ValueError):
                 pass
-        # Restore HP to full
+        # Enforce respawn cooldown if configured on character
+        now = timezone.now()
+        ra = getattr(character, 'respawn_available_at', None)
+        if ra and now < ra:
+            remaining = int((ra - now).total_seconds())
+            return JsonResponse({'success': False, 'error': 'respawn_cooldown', 'seconds_remaining': max(0, remaining)}, status=429)
+        # Restore HP to full and clear downed state
         character.current_hp = character.max_hp
         character.in_combat = False
+        try:
+            character.downed_at = None
+            character.respawn_available_at = None
+        except Exception:
+            pass
         character.save()
         # Log respawn event
         try:
@@ -747,6 +758,16 @@ def api_pve_combat_start(request):
             monster.current_target = character
             monster.save(update_fields=['in_combat', 'current_target'])
         
+        # Trigger PK-style server-driven combat loop over WebSocket for this character
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'character_{character.id}',
+                {'type': 'start_combat_loop', 'combat_id': str(combat.id)}
+            )
+        except Exception:
+            pass
+        
         return JsonResponse({
             'success': True,
             'combat': {
@@ -886,6 +907,116 @@ def api_combat_action(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
+@login_required
+@require_http_methods(["POST"])
+def api_combat_heal(request):
+    """Claim environmental healing or use a consumable to heal.
+    Body: { item_name?: str, resource_id?: uuid }
+    - If item_name is provided and is a consumable with healing, use it.
+    - Otherwise, attempt to claim exclusive healing from a nearby healing ResourceNode within 5 meters.
+      Heals 5 HP/sec for up to 30 seconds while the player remains within range.
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        item_name = (data.get('item_name') or '').strip()
+        resource_id = data.get('resource_id')
+
+        # If an item is specified, try to use it
+        if item_name:
+            ok, msg = character.use_item(item_name, 1)
+            # Push HUD and inventory updates
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+                async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            except Exception:
+                pass
+            return JsonResponse({'success': ok, 'message': msg, 'current_hp': character.current_hp, 'max_hp': character.max_hp})
+
+        # Otherwise, locate a nearby healing resource
+        HEAL_TYPES = {'berry_bush', 'tree', 'herb_patch', 'well', 'farm'}
+        # Small bounding box around character for efficiency (~10m)
+        lat_eps = 0.0001
+        lon_eps = 0.0001
+        candidates = ResourceNode.objects.filter(
+            lat__gte=character.lat - lat_eps,
+            lat__lte=character.lat + lat_eps,
+            lon__gte=character.lon - lon_eps,
+            lon__lte=character.lon + lon_eps,
+            resource_type__in=list(HEAL_TYPES)
+        )
+        # Choose specified or nearest within 5m
+        target = None
+        if resource_id:
+            try:
+                target = candidates.get(id=resource_id)
+            except ResourceNode.DoesNotExist:
+                return JsonResponse({'success': False, 'error': 'resource_not_found'}, status=404)
+        else:
+            best = None
+            best_d = 999999
+            for rn in candidates:
+                d = character.distance_to(rn.lat, rn.lon)
+                if d <= 5 and d < best_d:
+                    best, best_d = rn, d
+            target = best
+        if not target:
+            return JsonResponse({'success': False, 'error': 'no_healing_source_nearby'}, status=400)
+
+        # Enforce exclusive claim: only one active per resource
+        now = timezone.now()
+        claim = HealingClaim.objects.filter(resource=target, active=True).first()
+        if claim and claim.character_id != character.id:
+            return JsonResponse({'success': False, 'error': 'healing_source_in_use'}, status=409)
+        if not claim:
+            # Start a new claim if in range
+            if character.distance_to(target.lat, target.lon) > 5:
+                return JsonResponse({'success': False, 'error': 'too_far'}, status=400)
+            claim = HealingClaim.objects.create(
+                character=character,
+                resource=target,
+                active=True,
+                expires_at=now + timedelta(seconds=30)
+            )
+            healed = 0
+            remaining = 30
+        else:
+            # Tick healing based on elapsed time since last tick
+            if character.distance_to(target.lat, target.lon) > 5:
+                claim.active = False
+                claim.save(update_fields=['active', 'updated_at'])
+                return JsonResponse({'success': False, 'error': 'moved_out_of_range'}, status=400)
+            end = min(now, claim.expires_at) if claim.expires_at else now
+            elapsed = max(0.0, (end - claim.last_tick_at).total_seconds())
+            healed = int(elapsed * 5.0)  # 5 HP/sec
+            if healed > 0:
+                old = character.current_hp
+                character.current_hp = min(character.max_hp, int(character.current_hp) + healed)
+                character.save(update_fields=['current_hp', 'updated_at'])
+                claim.last_tick_at = now
+            # End the claim if expired
+            if claim.expires_at and now >= claim.expires_at:
+                claim.active = False
+            claim.save(update_fields=['last_tick_at', 'active', 'updated_at'])
+            remaining = max(0, int((claim.expires_at - now).total_seconds())) if (claim.expires_at and claim.active) else 0
+
+        # Push character update via WebSocket
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+
+        return JsonResponse({'success': True, 'healed': healed, 'current_hp': character.current_hp, 'max_hp': character.max_hp, 'claim_active': claim.active, 'seconds_remaining': remaining, 'resource': {'id': str(target.id), 'type': target.resource_type}})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
 def handle_combat_victory(combat, character):
     """Handle player victory in PvE combat, and advance any active FlagRun."""
     combat.status = 'victory'
@@ -1001,12 +1132,20 @@ def handle_combat_defeat(combat, character):
     except Exception:
         pass
     
+    # Set respawn cooldown (15 seconds)
+    try:
+        character.downed_at = timezone.now()
+        character.respawn_available_at = character.downed_at + timedelta(seconds=15)
+        character.save(update_fields=['downed_at', 'respawn_available_at', 'updated_at'])
+    except Exception:
+        pass
+
     return JsonResponse({
         'success': True,
         'combat_ended': True,
         'victory': False,
         'defeat': True,
-        'message': f'Defeated! Lost {gold_lost} gold.',
+        'message': f'Defeated! Lost {gold_lost} gold. Respawn available in ~15s.',
         'character': get_character_data(character)
     })
 
@@ -1027,6 +1166,11 @@ def get_combat_data(combat):
 
 def get_character_data(character):
     """Get character data for frontend"""
+    def _iso(dt):
+        try:
+            return dt.isoformat() if dt else None
+        except Exception:
+            return None
     return {
         'id': str(character.id),
         'name': character.name,
@@ -1045,6 +1189,8 @@ def get_character_data(character):
         'vitality': character.vitality,
         'agility': character.agility,
         'intelligence': character.intelligence,
+        'downed_at': _iso(getattr(character, 'downed_at', None)),
+        'respawn_available_at': _iso(getattr(character, 'respawn_available_at', None)),
     }
 
 
@@ -1155,7 +1301,7 @@ def api_inventory(request):
 def api_inventory_sell(request):
     """Quick-sell items from inventory by name and quantity.
     Body: { name: string, quantity: int }
-    Sells at item_template.base_value per unit and removes from inventory.
+    Sells at half of item_template.base_value per unit and removes from inventory.
     """
     try:
         character = Character.objects.get(user=request.user)
@@ -1174,7 +1320,9 @@ def api_inventory_sell(request):
             return JsonResponse({'success': False, 'error': 'Item not in inventory'}, status=404)
         sell_qty = min(inv.quantity, qty)
         unit_value = int(getattr(tpl, 'base_value', 0) or 0)
-        gold_gain = sell_qty * max(0, unit_value)
+        # Sell for half base value (floor)
+        unit_value = max(0, unit_value // 2)
+        gold_gain = sell_qty * unit_value
         # Update inventory
         inv.quantity -= sell_qty
         if inv.quantity <= 0:
@@ -1254,6 +1402,8 @@ def api_inventory_equip(request):
             it.is_equipped = False
             it.save(update_fields=['is_equipped', 'updated_at'])
             changed = True
+        # Snapshot agility before applying new armor (for penalty calc)
+        prev_agility = int(character.agility)
         # Apply new item bonuses
         try:
             character.strength = int(character.strength) + int(getattr(tpl, 'strength_bonus', 0) or 0)
@@ -1263,6 +1413,15 @@ def api_inventory_equip(request):
             character.intelligence = int(character.intelligence) + int(getattr(tpl, 'intelligence_bonus', 0) or 0)
         except Exception:
             pass
+        # Apply armor agility penalty: 10% of pre-equip agility (min 1)
+        if item_type == 'armor':
+            try:
+                import math as _math
+                penalty = max(1, int(_math.floor(prev_agility * 0.10)))
+                character.agility = int(character.agility) - penalty
+                inv.agility_penalty_applied = penalty
+            except Exception:
+                pass
         # Recompute derived stats and clamp
         try:
             character.recalculate_derived_stats()
@@ -1270,7 +1429,10 @@ def api_inventory_equip(request):
             pass
         character.save()
         inv.is_equipped = True
-        inv.save(update_fields=['is_equipped', 'updated_at'])
+        try:
+            inv.save(update_fields=['is_equipped', 'agility_penalty_applied', 'updated_at'])
+        except Exception:
+            inv.save(update_fields=['is_equipped', 'updated_at'])
         # Push WS updates
         try:
             channel_layer = get_channel_layer()
@@ -1318,13 +1480,25 @@ def api_inventory_unequip(request):
             character.intelligence = int(character.intelligence) - int(getattr(tpl, 'intelligence_bonus', 0) or 0)
         except Exception:
             pass
+        # Restore armor agility penalty if present
+        if item_type == 'armor':
+            try:
+                pen = int(getattr(inv, 'agility_penalty_applied', 0) or 0)
+                if pen > 0:
+                    character.agility = int(character.agility) + pen
+                    inv.agility_penalty_applied = 0
+            except Exception:
+                pass
         try:
             character.recalculate_derived_stats()
         except Exception:
             pass
         character.save()
         inv.is_equipped = False
-        inv.save(update_fields=['is_equipped', 'updated_at'])
+        try:
+            inv.save(update_fields=['is_equipped', 'agility_penalty_applied', 'updated_at'])
+        except Exception:
+            inv.save(update_fields=['is_equipped', 'updated_at'])
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})

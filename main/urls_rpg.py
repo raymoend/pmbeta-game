@@ -44,6 +44,7 @@ urlpatterns = [
     # Combat API endpoints
     path('api/rpg/combat/pve/start/', views_rpg.api_pve_combat_start, name='api_pve_combat_start'),
     path('api/rpg/combat/action/', views_rpg.api_combat_action, name='api_combat_action'),
+    path('api/rpg/combat/heal/', views_rpg.api_combat_heal, name='api_combat_heal'),
     path('api/rpg/combat/state/', views_rpg.api_combat_state, name='api_combat_state'),
     path('api/rpg/character/jump/', views_rpg.api_character_jump, name='api_character_jump'),
     
