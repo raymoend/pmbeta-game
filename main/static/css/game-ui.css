@@ -1,0 +1,91 @@
+/* Game UI Theme */
+:root {
+  --bg: #0f172a;          /* slate-900 */
+  --panel: #1f2937;       /* gray-800 */
+  --panel-2: #111827;     /* gray-900 */
+  --muted: #9ca3af;       /* gray-400 */
+  --text: #e5e7eb;        /* gray-200 */
+  --primary: #2563eb;     /* blue-600 */
+  --primary-2: #3b82f6;   /* blue-500 */
+  --success: #16a34a;     /* green-600 */
+  --danger: #ef4444;      /* red-500 */
+  --warning: #f59e0b;     /* amber-500 */
+  --accent: #8b5cf6;      /* violet-500 */
+  --elev: 0 10px 30px rgba(0,0,0,0.35);
+  --radius: 12px;
+}
+
+body { background: var(--bg); color: var(--text); }
+
+/* Floating action bar */
+.action-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  background: rgba(17,24,39,0.92);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+  z-index: 1600;
+  box-shadow: var(--elev);
+  backdrop-filter: blur(8px);
+}
+.action-bar .btn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-success { background: var(--success); color: #fff; }
+.btn-warn { background: var(--warning); color: #101010; }
+.btn-ghost { background: rgba(255,255,255,0.06); color: var(--text); }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Status tags */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.tag-success { background: rgba(22,163,74,0.15); color: #bbf7d0; }
+.tag-danger  { background: rgba(239,68,68,0.15); color: #fecaca; }
+.tag-info    { background: rgba(59,130,246,0.15); color: #bfdbfe; }
+
+/* Toasts */
+#messageArea {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message {
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: var(--elev);
+  border-radius: 10px;
+}
+
+/* Tiny spinner */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: #fff;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+/* Overlay buttons in resource list */
+.resource-btn { padding: 6px 10px; border-radius: 8px; font-weight: 600; }
+
+/* Compact badge row (beneath Inventory header) */
+.badge-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.badge-row .sep { color: rgba(255,255,255,0.2); }
+
