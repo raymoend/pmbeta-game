@@ -106,6 +106,19 @@ python manage.py runserver
 python manage.py runworker
 ```
 
+Alternative: Single ASGI server (Daphne) for local websockets
+- Recommended for local testing since it serves both HTTP and WebSocket on one port.
+- Windows (PowerShell):
+```powershell
+./scripts/run_dev.ps1 8001
+# then open http://127.0.0.1:8001
+```
+- macOS/Linux:
+```bash
+bash scripts/run_dev.sh 8001
+# then open http://127.0.0.1:8001
+```
+
 Background workers (Celery) for periodic game systems
 - Celery Worker (processes tasks like NPC density and income):
 ```bash
