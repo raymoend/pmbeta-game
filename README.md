@@ -106,6 +106,16 @@ python manage.py runserver
 python manage.py runworker
 ```
 
+Background workers (Celery) for periodic game systems
+- Celery Worker (processes tasks like NPC density and income):
+```bash
+celery -A pmbeta worker -l info
+```
+- Celery Beat (schedules periodic tasks):
+```bash
+celery -A pmbeta beat -l info
+```
+
 The application will be available at: http://localhost:8000
 
 ## Game Mechanics
@@ -137,6 +147,21 @@ The application will be available at: http://localhost:8000
 ### WebSocket Endpoint
 - `ws://localhost:8000/ws/game/` - Real-time game communication (in-memory by default)
 - For production or multi-instance, set REDIS_URL and switch Channels to Redis (see settings.py production block).
+
+#### WebSocket Actions (selected)
+- Jump to Flag
+  - Request:
+    - `{ "type": "jump_to_flag", "flag_id": "<uuid>" }`
+  - Response:
+    - `{ "type": "jump_to_flag", "result": { "success": true, "location": { "lat": <float>, "lon": <float> } } }`
+    - On cooldown: `{ "type": "jump_to_flag", "result": { "success": false, "error": "cooldown", "seconds_remaining": <int> } }`
+- Collect Flag Revenue
+  - Request:
+    - `{ "type": "collect_flag_revenue", "flag_id": "<uuid>" }`
+  - Response:
+    - `{ "type": "collect_flag_revenue", "result": { "success": true, "collected": <int>, "new_gold": <int> } }`
+  - Server also emits a HUD refresh:
+    - `{ "type": "character_update", "data": { "gold": <int>, "stamina": <int>, ... } }`
 
 ## Development
 

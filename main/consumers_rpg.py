@@ -100,6 +100,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_pong()
             elif message_type == 'jump_to_flag':
                 await self.handle_jump_to_flag(data)
+            elif message_type == 'collect_flag_revenue':
+                await self.handle_collect_flag_revenue(data)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
 
@@ -118,7 +120,12 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Invalid coordinates")
                 return
 
-            old_lat, old_lon = await self.update_character_position(self.character.id, new_lat, new_lon)
+            # Validate territory + stamina and persist move (atomic on DB thread)
+            try:
+                old_lat, old_lon = await self._validate_and_move(self.character.id, new_lat, new_lon)
+            except Exception as e:
+                await self.send_error(str(e))
+                return
 
             new_location_group = f"location_{int(new_lat * _grid_factor())}_{int(new_lon * _grid_factor())}"
             if new_location_group != self.location_group:
@@ -219,10 +226,22 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     async def send_pong(self):
         """Respond to ping"""
+        try:
+            await self._regen_stamina()
+        except Exception:
+            pass
         await self.send(text_data=json.dumps({
             'type': 'pong',
             'timestamp': self.get_current_timestamp()
         }))
+
+    @database_sync_to_async
+    def _regen_stamina(self):
+        from .services import stamina as stam
+        try:
+            stam.regen_stamina(self.character)
+        except Exception:
+            pass
 
     async def handle_jump_to_flag(self, data):
         """Handle Jump to Flag travel request"""
@@ -293,6 +312,16 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             'notification_type': event.get('notification_type', 'info')
         }))
 
+    async def character_update(self, event):
+        """Push a fresh HUD snapshot to the connected client.
+        Triggered by group_send(..., {'type': 'character_update'})
+        """
+        try:
+            snap = await self._character_hud_snapshot()
+            await self.send(text_data=json.dumps({'type': 'character_update', 'data': snap}))
+        except Exception as e:
+            logger.error(f"character_update send failed: {e}")
+
     # Database helper methods
     @database_sync_to_async
     def get_character(self, user):
@@ -304,18 +333,25 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             return None
 
     @database_sync_to_async
-    def update_character_position(self, character_id, lat, lon):
-        """Update character position"""
-        try:
-            from .models import Character
-            character = Character.objects.get(id=character_id)
-            old_lat, old_lon = character.lat, character.lon
-            character.lat = lat
-            character.lon = lon
-            character.save(update_fields=['lat', 'lon'])
-            return old_lat, old_lon
-        except Exception:
-            return None, None
+    def _validate_and_move(self, character_id, new_lat, new_lon):
+        """Validate territory rules, consume stamina, and update position."""
+        from .models import Character
+        from .services.movement import ensure_in_territory, haversine_m
+        from .services import stamina as stam
+        from .services.movement import MovementError
+        ch = Character.objects.get(id=character_id)
+        # Territory check
+        ensure_in_territory(ch, float(new_lat), float(new_lon))
+        # Stamina cost for movement
+        dist_m = haversine_m(float(ch.lat), float(ch.lon), float(new_lat), float(new_lon))
+        cost = stam.movement_stamina_cost(dist_m)
+        if not stam.consume_stamina(ch, cost):
+            raise MovementError('exhausted', 'Insufficient stamina for movement')
+        old_lat, old_lon = ch.lat, ch.lon
+        ch.lat = float(new_lat)
+        ch.lon = float(new_lon)
+        ch.save(update_fields=['lat', 'lon'])
+        return old_lat, old_lon
 
     @database_sync_to_async
     def update_character_online_status(self, character_id, is_online):
@@ -586,6 +622,48 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         return timezone.now().isoformat()
 
     @database_sync_to_async
+    def _character_hud_snapshot(self) -> dict:
+        """Return a concise HUD snapshot of the current character.
+        Includes gold, HP/mana/stamina, XP progress, position, and jump cooldown remaining.
+        """
+        try:
+            from .models import Character
+            from django.utils import timezone as _tz
+            ch = Character.objects.get(id=self.character.id)
+            xp_needed = int(ch.experience_needed_for_next_level())
+            xp_to_next = max(0, xp_needed - int(ch.experience))
+            # Jump cooldown remaining
+            try:
+                cooldown_s = int(getattr(settings, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
+            except Exception:
+                cooldown_s = 60
+            remaining = 0
+            if getattr(ch, 'last_jump_at', None):
+                elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
+                if elapsed < cooldown_s:
+                    remaining = max(0, int(cooldown_s - elapsed))
+            return {
+                'level': int(ch.level),
+                'experience': int(ch.experience),
+                'experience_to_next': int(xp_to_next),
+                'health': int(ch.current_hp),
+                'max_health': int(ch.max_hp),
+                'mana': int(ch.current_mana),
+                'max_mana': int(ch.max_mana),
+                'stamina': int(ch.current_stamina),
+                'max_stamina': int(ch.max_stamina),
+                'gold': int(ch.gold),
+                'lat': float(ch.lat),
+                'lon': float(ch.lon),
+                'can_jump': remaining == 0,
+                'jump_cooldown_remaining_s': int(remaining),
+                'downed_at': ch.downed_at.isoformat() if ch.downed_at else None,
+                'respawn_available_at': ch.respawn_available_at.isoformat() if ch.respawn_available_at else None,
+            }
+        except Exception:
+            return {}
+
+    @database_sync_to_async
     def _jump_to_flag_db(self, flag_id: str):
         """Perform jump using travel service; returns a serializable dict.
         Formats TravelError into {success: False, error, seconds_remaining?}.
@@ -612,3 +690,32 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             if seconds_remaining is not None:
                 out['seconds_remaining'] = seconds_remaining
             return out
+
+    async def handle_collect_flag_revenue(self, data):
+        """Collect uncollected revenue from a flag owned by the player."""
+        try:
+            flag_id = data.get('flag_id')
+            if not flag_id:
+                await self.send_error('flag_id required')
+                return
+            res = await self._collect_flag_revenue_db(flag_id)
+            await self.send(text_data=json.dumps({'type': 'collect_flag_revenue', 'result': res}))
+            try:
+                await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Collect revenue error: {e}")
+            await self.send_error('Collect failed')
+
+    @database_sync_to_async
+    def _collect_flag_revenue_db(self, flag_id: str):
+        from .services.flags import collect_revenue, FlagError
+        try:
+            user = self.scope.get('user')
+            out = collect_revenue(user, flag_id)
+            return {'success': True, **out}
+        except FlagError as fe:
+            return {'success': False, 'error': fe.code}
+        except Exception:
+            return {'success': False, 'error': 'server_error'}

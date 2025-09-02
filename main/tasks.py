@@ -1,42 +1,36 @@
-try:
-    from celery import shared_task
-except Exception:
-    # If Celery is not available, define a no-op decorator
-    def shared_task(func=None, **kwargs):  # type: ignore
-        def wrap(f):
-            return f
-        return wrap if func is None else wrap(func)
+from celery import shared_task
+from django.utils import timezone
+from django.db.models import F
+from django.conf import settings
 
 from .services import territory as territory_svc
-from .views_rpg import respawn_dead_monsters
+from .models import TerritoryFlag, Monster
+
 
 @shared_task
 def npc_pulse_task(min_per_flag: int = None):
     """Periodic task to maintain persistent NPC population in flag territories.
     If min_per_flag is None, read from settings.GAME_SETTINGS.MIN_FLAG_NPCS.
+    Also respawns any dead monsters that have reached their respawn time.
     """
     # Determine target density
     try:
-        from django.conf import settings
         target = int(min_per_flag) if min_per_flag is not None else int(getattr(settings, 'GAME_SETTINGS', {}).get('MIN_FLAG_NPCS', 3))
     except Exception:
         target = 3
-    # Allow ready respawns
-    respawn_dead_monsters()
+
+    # Respawn monsters that are ready
+    now = timezone.now()
+    qs = Monster.objects.filter(is_alive=False, respawn_at__isnull=False, respawn_at__lte=now)
+    for m in qs:
+        try:
+            m.respawn()
+        except Exception:
+            pass
+
     # Ensure minimum alive per flag
     territory_svc.ensure_flag_monsters(min_alive_per_flag=target)
 
-from django.utils import timezone
-from django.db.models import F
-# Make Celery optional: provide a no-op shared_task decorator if Celery isn't installed
-try:
-    from celery import shared_task  # type: ignore
-except Exception:
-    def shared_task(func=None, *args, **kwargs):  # type: ignore
-        def decorator(f):
-            return f
-        return decorator(func) if func else decorator
-from .models import TerritoryFlag, Character, ResourceNode
 
 @shared_task
 def accrue_flag_income():
@@ -53,6 +47,7 @@ def accrue_flag_income():
             flag.save(update_fields=['uncollected_balance', 'last_income_at', 'updated_at'])
             updated += 1
     return updated
+
 
 @shared_task
 def deduct_flag_upkeep():

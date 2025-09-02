@@ -59,3 +59,57 @@ def ensure_interaction_range(character, target_lat: float, target_lon: float) ->
     if dist > rng:
         raise MovementError('out_of_range', f'Target out of range ({int(dist)}m > {rng}m)')
 
+
+def ensure_in_territory(character, new_lat: float, new_lon: float) -> None:
+    """Ensure the target point lies within the player's owned flag circles OR
+    within any hex adjacent to their owned hexes. Allows a small starter
+    grace radius when the player owns no flags.
+    Raises MovementError on violation.
+    """
+    from ..models import TerritoryFlag as TF
+    from .territory import point_in_flag
+    from .flags import hex_id_for_latlon
+
+    gs = getattr(settings, 'GAME_SETTINGS', {}) or {}
+    pk = getattr(settings, 'PK_SETTINGS', {}) or {}
+    starter_grace = int(gs.get('STARTER_GRACE_RADIUS_M', pk.get('STARTER_GRACE_RADIUS_M', 50)))
+
+    # Gather owned flags
+    owned = list(TF.objects.filter(owner=character.user))
+
+    # No flags: allow small grace circle around current location
+    if not owned:
+        dist = haversine_m(character.lat, character.lon, new_lat, new_lon)
+        if dist <= max(0, starter_grace):
+            return
+        raise MovementError('out_of_bounds', 'Outside starter grace radius')
+
+    # Allowed if inside any owned flag circle
+    for f in owned:
+        if point_in_flag(new_lat, new_lon, f):
+            return
+
+    # Hex adjacency check
+    q_new, r_new = hex_id_for_latlon(new_lat, new_lon)
+
+    # Build owned cells set (use stored hex_q/hex_r if available; otherwise compute)
+    owned_cells = set()
+    for f in owned:
+        if f.hex_q is not None and f.hex_r is not None:
+            owned_cells.add((int(f.hex_q), int(f.hex_r)))
+        else:
+            owned_cells.add(hex_id_for_latlon(f.lat, f.lon))
+
+    # Directly owned cell
+    if (q_new, r_new) in owned_cells:
+        return
+
+    # Adjacent to any owned cell (flat-top axial neighbors)
+    neighbors = [(+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)]
+    for (oq, orr) in owned_cells:
+        for dq, dr in neighbors:
+            if (oq + dq, orr + dr) == (q_new, r_new):
+                return
+
+    raise MovementError('out_of_bounds', 'Outside owned/adjacent territory')
+
