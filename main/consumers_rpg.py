@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def _grid_factor() -> int:
-    """Grid factor for location groups. 20000 ≈ ~50m cells; 1000 ≈ ~1km cells."""
+    """Grid factor for location groups. 50000 ≈ ~20m cells; 1000 ≈ ~1km cells."""
     try:
-        return int(getattr(settings, 'WS_LOCATION_GRID_FACTOR', 20000))
+        return int(getattr(settings, 'WS_LOCATION_GRID_FACTOR', 50000))
     except Exception:
-        return 20000
+        return 50000
 
 
 class RPGGameConsumer(AsyncWebsocketConsumer):
@@ -95,6 +95,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.stop_combat_loop()
             elif message_type == 'trade_request':
                 await self.handle_trade_request(data)
+            elif message_type == 'trade_accept':
+                await self.handle_trade_accept(data)
             elif message_type == 'chat_message':
                 await self.handle_chat_message(data)
             elif message_type == 'request_nearby_data':
@@ -116,8 +118,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def handle_player_movement(self, data):
         """Handle real-time player movement with fine-grained geolocation"""
         try:
-            # Throttle rapid movement messages (anti-spam). Allow one every 250ms.
-            if not self._rate_ok('move', 0.250):
+# Throttle rapid movement messages (anti-spam). Allow one every 100ms.
+            if not self._rate_ok('player_movement', 0.10):
                 return
             new_lat = float(data.get('lat'))
             new_lon = float(data.get('lon'))
@@ -179,8 +181,9 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Missing trade data")
                 return
 
-            trade_id = await self.create_trade(self.character.id, target_character_id, items)
-            if trade_id:
+            result = await self.create_trade(self.character.id, target_character_id, items)
+            if result and not result.get('error') and result.get('id'):
+                trade_id = result.get('id')
                 await self.channel_layer.group_send(
                     f"character_{target_character_id}",
                     {
@@ -196,17 +199,43 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                     'message': f"Trade offer sent to character {target_character_id}"
                 }))
             else:
-                await self.send_error("Failed to initiate trade")
+                await self.send_error(result.get('error') if result else "Failed to initiate trade")
 
         except Exception as e:
             logger.error(f"Trade request error: {e}")
             await self.send_error("Trade failed")
 
+    async def handle_trade_accept(self, data):
+        """Handle acceptance of a pending trade by the recipient."""
+        try:
+            trade_id = data.get('trade_id')
+            if not trade_id:
+                await self.send_error('trade_id required')
+                return
+            res = await self._accept_trade_db(trade_id)
+            if res.get('success'):
+                payload = {
+                    'type': 'trade_accepted',
+                    'trade_id': str(trade_id),
+                    'by': str(self.character.id),
+                }
+                initiator_id = res.get('initiator_id')
+                recipient_id = res.get('recipient_id')
+                if initiator_id:
+                    await self.channel_layer.group_send(f"character_{initiator_id}", payload)
+                if recipient_id:
+                    await self.channel_layer.group_send(f"character_{recipient_id}", payload)
+            else:
+                await self.send_error(res.get('error') or 'trade_accept_failed')
+        except Exception as e:
+            logger.error(f"Trade accept error: {e}")
+            await self.send_error('Trade accept failed')
+
     async def handle_chat_message(self, data):
         """Handle PK-style chat (local or global)"""
         try:
-            # Rate limit chat: 1 message per second per connection
-            if not self._rate_ok('chat', 1.0):
+# Rate limit chat: 1 message per 0.5s per connection
+            if not self._rate_ok('chat_message', 0.5):
                 await self.send_error("You're sending messages too quickly.")
                 return
             message = data.get('message', '').strip()
@@ -256,13 +285,22 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     async def handle_jump_to_flag(self, data):
         """Handle Jump to Flag travel request"""
         try:
-            # Throttle jump requests to 1 per second
-            if not self._rate_ok('jump', 1.0):
+            # Strong rate limit: once per 10 seconds
+            if not self._rate_ok('jump_to_flag', 10.0):
                 await self.send_error('Please wait before jumping again')
                 return
             flag_id = data.get('flag_id')
             if not flag_id:
                 await self.send_error('flag_id required')
+                return
+            # Ownership and proximity (~50m) validation before attempting jump
+            pre = await self._validate_flag_jump_preconditions(flag_id)
+            if not pre.get('ok'):
+                err = pre.get('error') or 'jump_precondition_failed'
+                payload = {'type': 'jump_to_flag', 'result': {'success': False, 'error': err}}
+                if 'seconds_remaining' in pre:
+                    payload['result']['seconds_remaining'] = pre['seconds_remaining']
+                await self.send(text_data=json.dumps(payload))
                 return
             result = await self._jump_to_flag_db(flag_id)
             await self.send(text_data=json.dumps({
@@ -306,6 +344,14 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             'items': event['items']
         }))
 
+    async def trade_accepted(self, event):
+        """Notify client that a trade was accepted."""
+        await self.send(text_data=json.dumps({
+            'type': 'trade_accepted',
+            'trade_id': event.get('trade_id'),
+            'by': event.get('by'),
+        }))
+
     async def chat_message(self, event):
         """Send chat message to client"""
         await self.send(text_data=json.dumps({
@@ -332,7 +378,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         """
         try:
             snap = await self._character_hud_snapshot()
+            # Existing event (used by current HUD)
             await self.send(text_data=json.dumps({'type': 'character_update', 'data': snap}))
+            # Parallel event for clients expecting 'character' with id/name/gold
+            await self.send(text_data=json.dumps({'type': 'character', 'data': snap}))
         except Exception as e:
             logger.error(f"character_update send failed: {e}")
 
@@ -356,9 +405,9 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         ch = Character.objects.get(id=character_id)
         # Territory check
         ensure_in_territory(ch, float(new_lat), float(new_lon))
-        # Stamina cost for movement
+        # Stamina cost for movement — 0.1 stamina per meter (min 1)
         dist_m = haversine_m(float(ch.lat), float(ch.lon), float(new_lat), float(new_lon))
-        cost = stam.movement_stamina_cost(dist_m)
+        cost = max(1, int(round(dist_m * 0.1)))
         if not stam.consume_stamina(ch, cost):
             raise MovementError('exhausted', 'Insufficient stamina for movement')
         old_lat, old_lon = ch.lat, ch.lon
@@ -381,18 +430,104 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def create_trade(self, initiator_id, target_id, items):
-        """Create a trade offer (minimal row using existing Trade model)."""
+        """Create a trade offer after validating proximity (~20m) and ownership.
+        Returns {'id': <trade_id>} on success or {'error': <code>} on failure.
+        """
         try:
-            from .models import Trade, Character
-            # ensure recipient exists
-            Character.objects.get(id=target_id)
+            from django.apps import apps
+            from .services.movement import haversine_m
+            Character = apps.get_model('main', 'Character')
+            Trade = apps.get_model('main', 'Trade')
+            InventoryItem = None
+            try:
+                InventoryItem = apps.get_model('main', 'InventoryItem')
+            except Exception:
+                InventoryItem = None
+            initiator = Character.objects.get(id=initiator_id)
+            target = Character.objects.get(id=target_id)
+            # Proximity check (~20m)
+            try:
+                if hasattr(initiator, 'distance_to'):
+                    dist = float(initiator.distance_to(target.lat, target.lon))
+                else:
+                    dist = float(haversine_m(float(initiator.lat), float(initiator.lon), float(target.lat), float(target.lon)))
+            except Exception:
+                dist = 999999.0
+            if dist > 20.0:
+                return {'error': 'too_far'}
+            # Item ownership validation (best-effort)
+            if InventoryItem:
+                # find FK to Character dynamically
+                owner_field = None
+                for f in InventoryItem._meta.get_fields():
+                    try:
+                        if getattr(f, 'is_relation', False) and getattr(f, 'related_model', None) == Character:
+                            owner_field = f.name
+                            break
+                    except Exception:
+                        continue
+                for it in items:
+                    item_id = None
+                    if isinstance(it, dict):
+                        item_id = it.get('id') or it.get('item_id') or it.get('inventory_item_id')
+                    elif isinstance(it, (int, str)):
+                        item_id = it
+                    if not item_id:
+                        return {'error': 'invalid_item'}
+                    qs = InventoryItem.objects.filter(id=item_id)
+                    if owner_field:
+                        qs = qs.filter(**{owner_field: initiator})
+                    if not qs.exists():
+                        return {'error': 'not_owner'}
             trade = Trade.objects.create(
                 initiator_id=initiator_id,
                 recipient_id=target_id,
             )
-            return trade.id
+            return {'id': str(trade.id)}
         except Exception:
-            return None
+            return {'error': 'server_error'}
+
+    @database_sync_to_async
+    def _accept_trade_db(self, trade_id: str) -> dict:
+        from django.apps import apps
+        from .services.movement import haversine_m
+        try:
+            Character = apps.get_model('main', 'Character')
+            Trade = apps.get_model('main', 'Trade')
+            trade = Trade.objects.get(id=trade_id)
+            # Validate recipient matches current character
+            recip_id = getattr(trade, 'recipient_id', None)
+            if recip_id is None and hasattr(trade, 'recipient'):
+                recip_id = getattr(trade.recipient, 'id', None)
+            if str(recip_id) != str(self.character.id):
+                return {'success': False, 'error': 'not_recipient'}
+            # Proximity check between initiator and recipient (~20m)
+            init_id = getattr(trade, 'initiator_id', None)
+            if init_id is None and hasattr(trade, 'initiator'):
+                init_id = getattr(trade.initiator, 'id', None)
+            initiator = Character.objects.get(id=init_id)
+            recipient = Character.objects.get(id=self.character.id)
+            try:
+                if hasattr(initiator, 'distance_to'):
+                    dist = float(initiator.distance_to(recipient.lat, recipient.lon))
+                else:
+                    dist = float(haversine_m(float(initiator.lat), float(initiator.lon), float(recipient.lat), float(recipient.lon)))
+            except Exception:
+                dist = 999999.0
+            if dist > 20.0:
+                return {'success': False, 'error': 'too_far'}
+            # Accept trade using model method if available
+            if hasattr(trade, 'accept') and callable(getattr(trade, 'accept')):
+                trade.accept()
+            else:
+                if hasattr(trade, 'status'):
+                    trade.status = 'accepted'
+                    trade.save(update_fields=['status'])
+                else:
+                    trade.save()
+            return {'success': True, 'initiator_id': str(init_id), 'recipient_id': str(self.character.id)}
+        except Exception:
+            return {'success': False, 'error': 'server_error'}
 
     async def start_combat_loop(self, event):
         """Start PK-style simplified combat loop using model turn interval."""
@@ -404,7 +539,27 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             self._combat_id = combat_id
             snap = await self._get_combat_snapshot(combat_id)
             if snap:
-                await self.send(text_data=json.dumps({'type': 'combat_start', 'combat': snap}))
+                # Enrich combat_start payload for clients expecting concise fields
+                try:
+                    payload = {
+                        'type': 'combat_start',
+                        'combat': snap,
+                        'combatId': snap.get('id'),
+                        'playerId': snap.get('player_id'),
+                        'playerHp': snap.get('player_hp'),
+                        'enemyId': snap.get('enemy_id'),
+                        'enemyName': (snap.get('enemy') or {}).get('name'),
+                        'enemyMaxHp': (snap.get('enemy') or {}).get('max_hp'),
+                        'enemyHp': snap.get('enemy_hp'),
+                        'interval': snap.get('interval'),
+                        'objectId': snap.get('enemy_id'),
+                        'objectType': 'mob',
+                        'objectName': (snap.get('enemy') or {}).get('name'),
+                        'position': snap.get('enemy_position') or {},
+                    }
+                except Exception:
+                    payload = {'type': 'combat_start', 'combat': snap}
+                await self.send(text_data=json.dumps(payload))
             self._combat_task = asyncio.create_task(self._run_pve_loop(combat_id))
         except Exception as e:
             logger.error(f"Start combat loop error: {e}")
@@ -432,20 +587,77 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 result = await self._resolve_turn_and_snapshot(combat_id)
                 if not result:
                     break
+# Emit granular combat:damage events derived from HP deltas
+                try:
+                    dmg_enemy = int(result.get('damage_to_enemy') or 0)
+                    dmg_player = int(result.get('damage_to_player') or 0)
+                    enemy_id = result.get('enemy_id')
+                    enemy_name = ((result.get('enemy') or {}).get('name')) if result.get('enemy') else 'Enemy'
+                    enemy_pos = result.get('enemy_position') or {}
+                    if dmg_enemy > 0 and enemy_id:
+                        await self.send(text_data=json.dumps({
+                            'type': 'combat:damage',
+                            'targetId': enemy_id,
+                            'targetName': enemy_name,
+                            'targetType': 'mob',
+                            'damage': int(dmg_enemy),
+                            'isCritical': False,
+                            'position': enemy_pos,
+                        }))
+                    if dmg_player > 0:
+                        await self.send(text_data=json.dumps({
+                            'type': 'combat:damage',
+                            'targetId': str(getattr(self, 'character', None).id) if getattr(self, 'character', None) else None,
+                            'targetName': getattr(self, 'character', None).name if getattr(self, 'character', None) else 'You',
+                            'targetType': 'player',
+                            'damage': int(dmg_player),
+                            'isCritical': False,
+                        }))
+                    # Turn-by-turn combat log for UI
+                    if result.get('message'):
+                        await self.send(text_data=json.dumps({
+                            'type': 'combat:log',
+                            'message': result.get('message'),
+                            'timestamp': self.get_current_timestamp(),
+                        }))
+                except Exception:
+                    pass
+
+                # Preserve existing aggregate update for backward compatibility
                 await self.send(text_data=json.dumps({'type': 'combat_update', 'combat': result}))
                 status = (result.get('status') or '').lower()
                 if status in ('victory', 'defeat', 'fled'):
-                    await self.send(text_data=json.dumps({'type': 'combat_end', 'combat': result}))
+                    try:
+                        # Enrich end event for UI convenience
+                        snap = await self._character_hud_snapshot()
+                    except Exception:
+                        snap = {}
+                    # Richer combat_end payload
+                    end_payload = {
+                        'type': 'combat_end',
+                        'combat': result,
+                        'victory': status == 'victory',
+                        'defeat': status == 'defeat',
+                        'message': result.get('message'),
+                        'character': snap,
+                        'combatId': result.get('id'),
+                        'status': result.get('status'),
+                        'playerHp': result.get('player_hp'),
+                        'enemyHp': result.get('enemy_hp'),
+                        'enemyId': result.get('enemy_id'),
+                        'enemyName': ((result.get('enemy') or {}).get('name')) if result.get('enemy') else None,
+                    }
+                    await self.send(text_data=json.dumps(end_payload))
                     try:
                         await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
                     except Exception:
                         pass
                     break
                 try:
-                    interval = int(result.get('interval', 2) or 2)
+                    interval = float(result.get('interval', 0.5) or 0.5)
                 except Exception:
-                    interval = 2
-                await asyncio.sleep(max(0.1, float(interval)))
+                    interval = 0.5
+                await asyncio.sleep(max(0.05, float(interval)))
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -460,10 +672,8 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             m = Monster.objects.get(id=monster_id, is_alive=True)
             if ch.in_combat or m.in_combat:
                 return None
-            dist = ch.distance_to(m.lat, m.lon)
-            max_range_m = int(getattr(settings, 'PVE_COMBAT_RANGE_M', 50))
-            if dist > max_range_m:
-                return None
+            # No fixed minimum distance gate here. We rely on PK-style leash/territory rules
+            # enforced by the HTTP move endpoint to end combat when the player wanders too far.
             combat = PvECombat.objects.create(
                 character=ch,
                 monster=m,
@@ -488,9 +698,20 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             return {
                 'id': str(c.id),
                 'status': c.status,
+                # Standardized keys used by frontend HUD
+                'player_hp': c.character_hp,
+                'enemy_hp': c.monster_hp,
+                # IDs and positions for richer client integrations
+                'player_id': str(getattr(c, 'character_id', c.character.id)),
+                'enemy_id': str(getattr(c, 'monster_id', c.monster.id)),
+                'enemy_position': {
+                    'lat': getattr(c.monster, 'lat', None),
+                    'lon': getattr(c.monster, 'lon', None),
+                },
+# Backward-compat keys (legacy)
                 'character_hp': c.character_hp,
                 'monster_hp': c.monster_hp,
-                'interval': getattr(c, 'turn_interval_seconds', 2) or 2,
+                'interval': float(getattr(c, 'turn_interval_seconds', 0.5) or 0.5),
                 'enemy': {
                     'name': c.monster.template.name,
                     'level': c.monster.template.level,
@@ -502,71 +723,114 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _resolve_turn_and_snapshot(self, combat_id: str):
-        """Resolve one combat turn via PvECombat.resolve_turn with fallback.
-        Also returns a concise 'message' summarizing the turn for UI logs.
+        """Resolve one ultra-fast PK-style combat turn (0.5s default).
+        Uses flat damage: character.strength + rand[-1,1], no defense.
+        Returns a snapshot with damage deltas and a human-readable message.
         """
         try:
+            from django.db import transaction
             from .models import PvECombat
-            c = PvECombat.objects.select_related('monster__template', 'character').get(id=combat_id)
-            interval = getattr(c, 'turn_interval_seconds', 2) or 2
-            # If not active, just echo state
-            if c.status != 'active':
-                return {
-                    'id': str(c.id),
-                    'status': c.status,
-                    'character_hp': c.character_hp,
-                    'monster_hp': c.monster_hp,
-                    'interval': interval,
-                    'enemy': {
-                        'name': c.monster.template.name,
-                        'level': c.monster.template.level,
-                        'max_hp': c.monster.max_hp,
+            import random
+            with transaction.atomic():
+                c = PvECombat.objects.select_related('monster__template', 'character').select_for_update().get(id=combat_id)
+                interval = float(getattr(c, 'turn_interval_seconds', 0.5) or 0.5)
+                # If not active, just echo state
+                if c.status != 'active':
+                    return {
+                        'id': str(c.id),
+                        'status': c.status,
+                        'character_hp': c.character_hp,
+                        'monster_hp': c.monster_hp,
+                        'interval': interval,
+                        'player_id': str(getattr(c, 'character_id', c.character.id)),
+                        'enemy_id': str(getattr(c, 'monster_id', c.monster.id)),
+                        'enemy': {
+                            'name': c.monster.template.name,
+                            'level': c.monster.template.level,
+                            'max_hp': c.monster.max_hp,
+                        },
+                        'enemy_position': {
+                            'lat': getattr(c.monster, 'lat', None), 
+                            'lon': getattr(c.monster, 'lon', None),
+                        },
                     }
-                }
-            # Capture pre-turn HPs for delta-based message
-            prev_ch_hp, prev_m_hp = int(c.character_hp), int(c.monster_hp)
-            msg = None
-            try:
-                c.resolve_turn()
-            except Exception:
-                # Fallback simple resolution
-                import random
-                dmg = max(1, c.character.strength - c.monster.template.defense + random.randint(-3, 3))
-                c.monster_hp = max(0, c.monster_hp - dmg)
-                if c.monster_hp <= 0:
+                # Pre-turn HPs for deltas
+                prev_ch_hp, prev_m_hp = int(c.character_hp), int(c.monster_hp)
+                enemy_name = getattr(getattr(c, 'monster', None), 'template', None).name if getattr(getattr(c, 'monster', None), 'template', None) else 'Enemy'
+                # Flat damage model
+                char_str = int(getattr(c.character, 'strength', 1))
+                mon_str = int(getattr(c.monster.template, 'strength', 1))
+                dmg_to_enemy = max(1, char_str + random.randint(-1, 1))
+                c.monster_hp = max(0, int(c.monster_hp) - int(dmg_to_enemy))
+                if int(c.monster_hp) <= 0:
                     c.end_combat('victory')
+                    c.refresh_from_db()
+                    d_m = max(0, prev_m_hp - int(c.monster_hp))
+                    d_c = max(0, prev_ch_hp - int(c.character_hp))
+                    msg = f"You hit {enemy_name} for {d_m}! {enemy_name} defeated!"
+                    return {
+                        'id': str(c.id),
+                        'status': c.status,
+                        'player_hp': c.character_hp,
+                        'enemy_hp': c.monster_hp,
+                        'player_id': str(getattr(c, 'character_id', c.character.id)),
+                        'enemy_id': str(getattr(c, 'monster_id', c.monster.id)),
+                        'enemy_position': {
+                            'lat': getattr(c.monster, 'lat', None),
+                            'lon': getattr(c.monster, 'lon', None),
+                        },
+                        'damage_to_enemy': int(max(0, d_m)),
+                        'damage_to_player': int(max(0, d_c)),
+                        'character_hp': c.character_hp,
+                        'monster_hp': c.monster_hp,
+                        'interval': interval,
+                        'enemy': {
+                            'name': c.monster.template.name,
+                            'level': c.monster.template.level,
+                            'max_hp': c.monster.max_hp,
+                        },
+                        'message': msg,
+                    }
+                # Monster retaliates only if still alive
+                dmg_to_player = max(1, mon_str + random.randint(-1, 1))
+                c.character_hp = max(0, int(c.character_hp) - int(dmg_to_player))
+                if int(c.character_hp) <= 0:
+                    c.end_combat('defeat')
                 else:
-                    dmg2 = max(1, c.monster.template.strength - c.character.defense + random.randint(-3, 3))
-                    c.character_hp = max(0, c.character_hp - dmg2)
-                    if c.character_hp <= 0:
-                        c.end_combat('defeat')
-                    else:
-                        c.save()
-            c.refresh_from_db()
-            # Compute deltas
+                    c.save(update_fields=['monster_hp', 'character_hp'])
+            # After transaction, refresh and compose payload
+            from .models import PvECombat as _PvE
+            c = _PvE.objects.select_related('monster__template', 'character').get(id=combat_id)
+            interval = float(getattr(c, 'turn_interval_seconds', 0.5) or 0.5)
             d_m = max(0, prev_m_hp - int(c.monster_hp))
             d_c = max(0, prev_ch_hp - int(c.character_hp))
             enemy_name = getattr(getattr(c, 'monster', None), 'template', None).name if getattr(getattr(c, 'monster', None), 'template', None) else 'Enemy'
             if c.status == 'active':
-                if d_m > 0 and d_c > 0:
-                    msg = f"You hit {enemy_name} for {d_m}. {enemy_name} hit you for {d_c}."
-                elif d_m == 0 and d_c > 0:
-                    msg = f"You are exhausted and couldn't attack. {enemy_name} hit you for {d_c}."
-                elif d_m > 0 and d_c == 0:
-                    msg = f"You hit {enemy_name} for {d_m}."
-            elif c.status == 'victory':
+                parts = []
                 if d_m > 0:
-                    msg = f"You dealt {d_m} and defeated {enemy_name}!"
-                else:
-                    msg = f"{enemy_name} defeated!"
-            elif c.status == 'defeat':
+                    parts.append(f"You hit {enemy_name} for {d_m}!")
                 if d_c > 0:
-                    msg = f"{enemy_name} hit you for {d_c}. You are downed."
-                else:
-                    msg = f"You are downed."
+                    parts.append(f"{enemy_name} hit you for {d_c}!")
+                msg = " ".join(parts) if parts else None
+            elif c.status == 'victory':
+                msg = f"You hit {enemy_name} for {d_m}! {enemy_name} defeated!"
+            elif c.status == 'defeat':
+                msg = f"{enemy_name} hit you for {d_c}! You are downed."
+            else:
+                msg = None
             return {
                 'id': str(c.id),
                 'status': c.status,
+                'player_hp': c.character_hp,
+                'enemy_hp': c.monster_hp,
+                'player_id': str(getattr(c, 'character_id', c.character.id)),
+                'enemy_id': str(getattr(c, 'monster_id', c.monster.id)),
+                'enemy_position': {
+                    'lat': getattr(c.monster, 'lat', None),
+                    'lon': getattr(c.monster, 'lon', None),
+                },
+                'damage_to_enemy': int(max(0, d_m)),
+                'damage_to_player': int(max(0, d_c)),
                 'character_hp': c.character_hp,
                 'monster_hp': c.monster_hp,
                 'interval': interval,
@@ -591,25 +855,31 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_nearby_data(self, character_id):
-        """Get nearby entities (≈50m for players, ≈20m for monsters/resources)."""
+        """Get nearby entities (~20m for players, monsters, resources) and flags."""
         try:
-            from .models import Character, Monster, ResourceNode
+            from django.apps import apps
+            Character = apps.get_model('main', 'Character')
+            Monster = apps.get_model('main', 'Monster')
+            ResourceNode = apps.get_model('main', 'ResourceNode')
+            Flag = None
+            try:
+                Flag = apps.get_model('main', 'Flag')
+            except Exception:
+                Flag = None
             character = Character.objects.get(id=character_id)
 
-            # Nearby players (~50m)
-            lat_range = 0.00045
-            lon_range = 0.00045
+            # Nearby ranges (~20m)
+            lat_r = 0.00018
+            lon_r = 0.00018
+
             nearby_players = Character.objects.filter(
-                lat__gte=character.lat - lat_range,
-                lat__lte=character.lat + lat_range,
-                lon__gte=character.lon - lon_range,
-                lon__lte=character.lon + lon_range,
+                lat__gte=character.lat - lat_r,
+                lat__lte=character.lat + lat_r,
+                lon__gte=character.lon - lon_r,
+                lon__lte=character.lon + lon_r,
                 is_online=True
             ).exclude(id=character.id)[:20]
 
-            # Nearby monsters/resources (~20m)
-            lat_r = 0.00018
-            lon_r = 0.00018
             nearby_monsters = Monster.objects.filter(
                 lat__gte=character.lat - lat_r,
                 lat__lte=character.lat + lat_r,
@@ -625,6 +895,52 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 lon__lte=character.lon + lon_r,
                 is_depleted=False
             )[:10]
+
+            flags_payload = {'owned': [], 'nearby': []}
+            if Flag:
+                # Determine owner field on Flag pointing to Character
+                owner_field = None
+                for f in Flag._meta.get_fields():
+                    try:
+                        if getattr(f, 'is_relation', False) and getattr(f, 'related_model', None) == Character:
+                            owner_field = f.name
+                            break
+                    except Exception:
+                        continue
+                if owner_field:
+                    try:
+                        owned_flags = Flag.objects.filter(**{owner_field: character})[:20]
+                    except Exception:
+                        owned_flags = []
+                else:
+                    owned_flags = []
+                try:
+                    nearby_flags = Flag.objects.filter(
+                        lat__gte=character.lat - lat_r,
+                        lat__lte=character.lat + lat_r,
+                        lon__gte=character.lon - lon_r,
+                        lon__lte=character.lon + lon_r,
+                    )[:20]
+                except Exception:
+                    nearby_flags = []
+                flags_payload = {
+                    'owned': [
+                        {
+                            'id': str(f.id),
+                            'lat': getattr(f, 'lat', None),
+                            'lon': getattr(f, 'lon', None),
+                            'level': int(getattr(f, 'level', 1) or 1),
+                        } for f in owned_flags
+                    ],
+                    'nearby': [
+                        {
+                            'id': str(f.id),
+                            'lat': getattr(f, 'lat', None),
+                            'lon': getattr(f, 'lon', None),
+                            'level': int(getattr(f, 'level', 1) or 1),
+                        } for f in nearby_flags
+                    ]
+                }
 
             return {
                 'players': [
@@ -655,10 +971,11 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                         'lon': r.lon,
                         'quantity': r.quantity
                     } for r in nearby_resources
-                ]
+                ],
+                'flags': flags_payload,
             }
         except Exception:
-            return {'players': [], 'monsters': [], 'resources': []}
+            return {'players': [], 'monsters': [], 'resources': [], 'flags': {'owned': [], 'nearby': []}}
 
     def get_current_timestamp(self):
         """Get current timestamp"""
@@ -679,25 +996,77 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _character_hud_snapshot(self) -> dict:
         """Return a concise HUD snapshot of the current character.
-        Includes gold, HP/mana/stamina, XP progress, position, and jump cooldown remaining.
+        Includes gold, HP/mana/stamina, XP progress, position, jump cooldown, owned flags, and trade status.
         """
         try:
-            from .models import Character
+            from django.apps import apps
             from django.utils import timezone as _tz
+            Character = apps.get_model('main', 'Character')
+            Flag = None
+            Trade = None
+            try:
+                Flag = apps.get_model('main', 'Flag')
+            except Exception:
+                Flag = None
+            try:
+                Trade = apps.get_model('main', 'Trade')
+            except Exception:
+                Trade = None
             ch = Character.objects.get(id=self.character.id)
             xp_needed = int(ch.experience_needed_for_next_level())
             xp_to_next = max(0, xp_needed - int(ch.experience))
-            # Jump cooldown remaining
+            # Jump cooldown remaining (honor 10s minimum if GAME_SETTINGS longer)
             try:
-                cooldown_s = int(getattr(settings, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
+                cooldown_s = max(10, int(getattr(settings, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60)))
             except Exception:
-                cooldown_s = 60
+                cooldown_s = 10
             remaining = 0
             if getattr(ch, 'last_jump_at', None):
                 elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
                 if elapsed < cooldown_s:
                     remaining = max(0, int(cooldown_s - elapsed))
+            # Owned flags summary (best-effort)
+            owned_flags = []
+            if Flag:
+                owner_field = None
+                for f in Flag._meta.get_fields():
+                    try:
+                        if getattr(f, 'is_relation', False) and getattr(f, 'related_model', None) == Character:
+                            owner_field = f.name
+                            break
+                    except Exception:
+                        continue
+                if owner_field:
+                    try:
+                        for fl in Flag.objects.filter(**{owner_field: ch})[:20]:
+                            owned_flags.append({
+                                'id': str(fl.id),
+                                'lat': getattr(fl, 'lat', None),
+                                'lon': getattr(fl, 'lon', None),
+                                'level': int(getattr(fl, 'level', 1) or 1),
+                            })
+                    except Exception:
+                        pass
+            # Trade status summary (best-effort)
+            trade_status = {'outbound_pending': 0, 'inbound_pending': 0}
+            if Trade:
+                try:
+                    fields = {f.name for f in Trade._meta.get_fields()}
+                    qs_out = Trade.objects.filter(initiator_id=ch.id)
+                    qs_in = Trade.objects.filter(recipient_id=ch.id)
+                    if 'status' in fields:
+                        qs_out = qs_out.filter(status__in=['pending', 'open'])
+                        qs_in = qs_in.filter(status__in=['pending', 'open'])
+                    elif 'accepted_at' in fields:
+                        qs_out = qs_out.filter(accepted_at__isnull=True)
+                        qs_in = qs_in.filter(accepted_at__isnull=True)
+                    trade_status['outbound_pending'] = qs_out.count()
+                    trade_status['inbound_pending'] = qs_in.count()
+                except Exception:
+                    pass
             return {
+                'id': str(ch.id),
+                'name': ch.name,
                 'level': int(ch.level),
                 'experience': int(ch.experience),
                 'experience_to_next': int(xp_to_next),
@@ -714,31 +1083,88 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 'jump_cooldown_remaining_s': int(remaining),
                 'downed_at': ch.downed_at.isoformat() if ch.downed_at else None,
                 'respawn_available_at': ch.respawn_available_at.isoformat() if ch.respawn_available_at else None,
+                'flags_owned': owned_flags,
+                'trade_status': trade_status,
             }
         except Exception:
             return {}
 
     @database_sync_to_async
+    def _validate_flag_jump_preconditions(self, flag_id: str) -> dict:
+        from django.apps import apps
+        from django.utils import timezone as _tz
+        try:
+            Character = apps.get_model('main', 'Character')
+            Flag = apps.get_model('main', 'Flag')
+            ch = Character.objects.get(id=self.character.id)
+            flag = Flag.objects.get(id=flag_id)
+            # Ownership check (FK to Character)
+            owner_field = None
+            for f in Flag._meta.get_fields():
+                try:
+                    if getattr(f, 'is_relation', False) and getattr(f, 'related_model', None) == Character:
+                        owner_field = f.name
+                        break
+                except Exception:
+                    continue
+            if not owner_field:
+                return {'ok': False, 'error': 'flag_owner_missing'}
+            owner = getattr(flag, owner_field, None)
+            if not owner or str(owner.id) != str(ch.id):
+                return {'ok': False, 'error': 'not_owner'}
+            # Proximity check (~50m)
+            try:
+                if hasattr(ch, 'distance_to'):
+                    dist = float(ch.distance_to(flag.lat, flag.lon))
+                else:
+                    from .services.movement import haversine_m
+                    dist = float(haversine_m(float(ch.lat), float(ch.lon), float(getattr(flag, 'lat', 0)), float(getattr(flag, 'lon', 0))))
+            except Exception:
+                dist = 999999.0
+            if dist > 50.0:
+                return {'ok': False, 'error': 'too_far'}
+            # Cooldown pre-check (10s)
+            try:
+                last = getattr(ch, 'last_jump_at', None)
+                if last:
+                    elapsed = (_tz.now() - last).total_seconds()
+                    if elapsed < 10.0:
+                        return {'ok': False, 'error': 'cooldown', 'seconds_remaining': max(0, int(10 - elapsed))}
+            except Exception:
+                pass
+            return {'ok': True}
+        except Exception:
+            return {'ok': False, 'error': 'server_error'}
+
+    @database_sync_to_async
     def _jump_to_flag_db(self, flag_id: str):
         """Perform jump using travel service; returns a serializable dict.
-        Formats TravelError into {success: False, error, seconds_remaining?}.
+        Enforces a strict 10s cooldown and formats TravelError into
+        {success: False, error, seconds_remaining?}.
         """
         from .services.travel import jump_to_flag, TravelError
+        from django.utils import timezone as _tz
+        from django.apps import apps
         try:
+            # Enforce 10s cooldown before delegating to service
+            Character = apps.get_model('main', 'Character')
+            ch = Character.objects.get(id=self.character.id)
+            last = getattr(ch, 'last_jump_at', None)
+            if last:
+                elapsed = (_tz.now() - last).total_seconds()
+                if elapsed < 10.0:
+                    return {'success': False, 'error': 'cooldown', 'seconds_remaining': max(0, int(10 - elapsed))}
             res = jump_to_flag(self.scope.get('user'), flag_id)
             return {'success': True, 'location': res.get('location')}
         except TravelError as te:
-            # If cooldown, compute remaining seconds
+            # If cooldown, compute remaining seconds (fixed 10s window)
             seconds_remaining = None
             try:
-                from django.utils import timezone as _tz
-                from django.conf import settings as _st
-                cooldown_s = int(getattr(_st, 'GAME_SETTINGS', {}).get('JUMP_COOLDOWN_S', 60))
                 ch = self.character
                 if getattr(ch, 'last_jump_at', None):
                     elapsed = (_tz.now() - ch.last_jump_at).total_seconds()
-                    if elapsed < cooldown_s:
-                        seconds_remaining = max(0, int(cooldown_s - elapsed))
+                    if elapsed < 10.0:
+                        seconds_remaining = max(0, int(10 - elapsed))
             except Exception:
                 seconds_remaining = None
             out = {'success': False, 'error': te.code}
@@ -766,10 +1192,29 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _collect_flag_revenue_db(self, flag_id: str):
         from .services.flags import collect_revenue, FlagError
+        from django.apps import apps
         try:
             user = self.scope.get('user')
-            out = collect_revenue(user, flag_id)
-            return {'success': True, **out}
+            base = collect_revenue(user, flag_id)  # assumes it credits base gold
+            # Apply multiplier: Flag.level * base_revenue (crediting extra gold if needed)
+            try:
+                Flag = apps.get_model('main', 'Flag')
+                Character = apps.get_model('main', 'Character')
+                ch = Character.objects.get(id=self.character.id)
+                flag = Flag.objects.get(id=flag_id)
+                level = int(getattr(flag, 'level', 1) or 1)
+                base_gold = int(base.get('gold', base.get('amount', 0)) or 0)
+                if base_gold > 0 and level > 1:
+                    # credit the additional gold (level-1) * base_gold
+                    extra = (level - 1) * base_gold
+                    try:
+                        ch.gold = int(getattr(ch, 'gold', 0)) + int(extra)
+                        ch.save(update_fields=['gold'])
+                    except Exception:
+                        pass
+                return {'success': True, 'gold_base': base_gold, 'gold_multiplier': level, 'gold_awarded': base_gold * max(1, level)}
+            except Exception:
+                return {'success': True, **base}
         except FlagError as fe:
             return {'success': False, 'error': fe.code}
         except Exception:

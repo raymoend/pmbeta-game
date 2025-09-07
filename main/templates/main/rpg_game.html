@@ -1849,6 +1849,7 @@
             monsters.forEach(monster => {
                 const color = getMonsterColor(monster.level);
                 const isInRange = monster.distance <= 50; // 50m range for combat
+                const canFight = isInRange && !monster.in_combat;
                 
                 // Create enhanced popup HTML with Fight button
                 const popupHTML = `
@@ -1870,9 +1871,9 @@
                             <div class="npc-distance">${Math.round(monster.distance)}m away</div>
                         </div>
                         <div class="npc-actions">
-                            ${isInRange ? 
-                                `<button class="fight-btn" onclick="startAutoCombat('${monster.id}')">⚔️ Fight</button>` : 
-                                `<button class="fight-btn disabled" disabled>Too Far Away</button>`
+                            ${canFight ?
+                                `<button class="fight-btn" onclick="startAutoCombat('${monster.id}')">⚔️ Fight</button>` :
+                                (monster.in_combat ? `<button class="fight-btn disabled" disabled>In Combat</button>` : `<button class="fight-btn disabled" disabled>Too Far Away</button>`)
                             }
                         </div>
                     </div>
@@ -2858,6 +2859,27 @@ if (dissolvedFeature) {
                         }
                     } catch (e) { console.warn('flag_event refresh failed', e); }
                     break;
+                case 'combat_update':
+                    try {
+                        const c = (data && data.combat) ? data.combat : (data && data.data ? data.data : data);
+                        if (c) {
+                            gameState.activeCombat = c;
+                            try { updateHpTicker(c); } catch (_) {}
+                        }
+                    } catch (e) { console.warn('combat_update handling failed', e); }
+                    break;
+                case 'combat:damage':
+                    try { showFloatingDamage(data); } catch (e) { console.warn('combat:damage handling failed', e); }
+                    break;
+                case 'combat_end':
+                    try {
+                        if (data && data.character) { try { updateCharacterStats(data.character); } catch (_) {} }
+                        if (data && data.victory) { try { showVictoryPopup(data.combat || { message: data.message }); } catch (_) {} }
+                        gameState.activeCombat = null;
+                        try { removeHpTicker(); } catch (_) {}
+                        showMessage((data && data.message) || (data && data.victory ? 'Victory!' : 'Combat ended'), (data && data.victory) ? 'success' : ((data && data.defeat) ? 'error' : 'info'));
+                    } catch (e) { console.warn('combat_end handling failed', e); }
+                    break;
             }
         }
 
@@ -3043,25 +3065,41 @@ if (dissolvedFeature) {
         }
 
         async function startAutoCombat(monsterId) {
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
             try {
                 const res = await fetch('/api/rpg/combat/pve/start/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                        'X-CSRFToken': csrf
                     },
+                    credentials: 'same-origin',
                     body: JSON.stringify({ monster_id: monsterId })
                 });
-                const data = await res.json();
-                if (!data.success) {
-                    showMessage(data.error || 'Failed to start combat', 'error');
+                let data = null;
+                try { data = await res.json(); } catch (_) { data = null; }
+
+                if (!res.ok || !data || data.success === false) {
+                    // Surface backend reason when available
+                    const err = (data && (data.error || data.message)) || `HTTP ${res.status}`;
+                    showMessage(err || 'Failed to start combat', 'error');
+                    // If there is an active combat already, try resuming HUD
+                    try {
+                        const s = await fetch('/api/rpg/combat/state/').then(r=>r.json()).catch(()=>null);
+                        if (s && s.success && s.active && s.combat) {
+                            gameState.activeCombat = s.combat;
+                            createHpTicker(s.combat);
+                            showMessage('Resumed active combat.', 'info');
+                        }
+                    } catch (_) {}
                     return;
                 }
-                gameState.activeCombat = data.combat;
-                createHpTicker(data.combat);
-                try { addCombatLog(`Engaged ${data.combat?.enemy?.name || 'enemy'}`); } catch(_) {}
+                // Success or resumed
+                const combat = data.combat;
+                gameState.activeCombat = combat;
+                createHpTicker(combat);
+                try { addCombatLog(`Engaged ${combat?.enemy?.name || 'enemy'}`); } catch(_) {}
                 // Server now drives combat; updates will arrive via WebSocket combat_update.
-                // Ensure any client timers are cleared.
                 if (gameState.autoCombatTimer) { try { clearInterval(gameState.autoCombatTimer); } catch(_) {} gameState.autoCombatTimer = null; }
                 gameState.autoCombatBusy = false;
             } catch (e) {
@@ -3250,6 +3288,49 @@ if (dissolvedFeature) {
                 try { messageArea.removeChild(messageArea.firstChild); } catch(_) {}
             }
             setTimeout(() => { try { box.remove(); } catch(_){} }, 3800);
+        }
+
+        // Floating damage numbers (simple visual feedback)
+        function showFloatingDamage(evt) {
+            try {
+                const dmg = Math.max(0, parseInt(evt && evt.damage, 10) || 0);
+                if (!dmg) return;
+                const isCrit = !!(evt && evt.isCritical);
+                let x = null, y = null;
+                try {
+                    const pos = evt && evt.position;
+                    if (pos && typeof pos.lon === 'number' && typeof pos.lat === 'number' && gameState.map) {
+                        const p = gameState.map.project({ lng: pos.lon, lat: pos.lat });
+                        x = p.x; y = p.y;
+                    }
+                } catch(_) {}
+                // Create element
+                const el = document.createElement('div');
+                el.textContent = isCrit ? `★ ${dmg}` : `${dmg}`;
+                el.style.position = 'fixed';
+                el.style.zIndex = '2000';
+                el.style.pointerEvents = 'none';
+                el.style.fontWeight = '800';
+                el.style.fontFamily = 'Segoe UI, sans-serif';
+                el.style.color = isCrit ? '#facc15' : '#f87171';
+                el.style.textShadow = '0 1px 2px rgba(0,0,0,0.6)';
+                el.style.transition = 'transform 0.8s ease, opacity 0.9s ease';
+                el.style.opacity = '1';
+                const mapEl = document.getElementById('map');
+                const rect = mapEl ? mapEl.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+                const startX = (x != null) ? (rect.left + x) : (rect.left + rect.width/2 + (Math.random()*40-20));
+                const startY = (y != null) ? (rect.top + y) : (rect.top + 120 + (Math.random()*20-10));
+                el.style.left = `${startX}px`;
+                el.style.top = `${startY}px`;
+                document.body.appendChild(el);
+                requestAnimationFrame(() => {
+                    try {
+                        el.style.transform = 'translateY(-24px)';
+                        el.style.opacity = '0';
+                    } catch(_) {}
+                });
+                setTimeout(() => { try { el.remove(); } catch(_){} }, 950);
+            } catch(_) {}
         }
 
         // Chat UI

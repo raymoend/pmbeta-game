@@ -22,6 +22,9 @@ from asgiref.sync import async_to_sync
 import json
 import random
 import math
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     Character, Monster, MonsterTemplate, ItemTemplate, InventoryItem,
@@ -714,37 +717,187 @@ def api_combat_state(request):
 @login_required
 @require_http_methods(["POST"])
 def api_pve_combat_start(request):
-    """Start PvE combat with a monster"""
+    """Start PvE combat with a monster, with stale-flag cleanup and resume support."""
     try:
         data = json.loads(request.body)
         monster_id = data.get('monster_id')
         
         character = Character.objects.get(user=request.user)
+        
+        # Global stale cleanup sweep (defensive): clear any abandoned active combats system-wide
+        try:
+            now = timezone.now()
+            from django.db.models import Q
+            stale_qs = PvECombat.objects.select_related('monster','character').filter(
+                status='active'
+            ).filter(
+                Q(last_turn_at__isnull=False, last_turn_at__lt=now - timedelta(seconds=8)) |
+                Q(last_turn_at__isnull=True, updated_at__lt=now - timedelta(seconds=12))
+            )[:20]
+            cleaned = 0
+            for s in stale_qs:
+                try:
+                    s.status = 'fled'
+                    s.ended_at = now
+                    s.save(update_fields=['status','ended_at','updated_at'])
+                    try:
+                        if getattr(s.character, 'in_combat', False):
+                            s.character.in_combat = False
+                            s.character.save(update_fields=['in_combat','updated_at'])
+                    except Exception:
+                        pass
+                    try:
+                        m = s.monster
+                        if m:
+                            m.in_combat = False
+                            m.current_target = None
+                            m.save(update_fields=['in_combat','current_target','updated_at'])
+                    except Exception:
+                        pass
+                    cleaned += 1
+                except Exception:
+                    # best-effort
+                    pass
+            if cleaned:
+                try:
+                    logger.warning(f'PvE stale sweep cleaned {cleaned} sessions')
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
         monster = Monster.objects.get(id=monster_id, is_alive=True)
-        
-        # Check if character is already in combat
-        if character.in_combat:
+
+        # If an active combat already exists for this character, resume it
+        active = PvECombat.objects.filter(character=character, status='active').select_related('monster__template').first()
+        if active:
+            # If this active combat is with a different monster, still resume existing
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    f'character_{character.id}',
+                    {'type': 'start_combat_loop', 'combat_id': str(active.id)}
+                )
+            except Exception:
+                pass
             return JsonResponse({
-                'success': False,
-                'error': 'Already in combat'
-            }, status=400)
-        
-        # Check distance
-        distance = character.distance_to(monster.lat, monster.lon)
-        if distance > 50:  # 50m combat range
+                'success': True,
+                'resumed': True,
+                'combat': {
+                    'id': str(active.id),
+                    'player_hp': active.character_hp,
+                    'enemy_hp': active.monster_hp,
+                    'enemy': {
+                        'name': active.monster.template.name,
+                        'level': active.monster.template.level,
+                        'max_hp': active.monster.max_hp,
+                    }
+                }
+            })
+
+        # Clean up stale flags: character marked in combat but no active row
+        if character.in_combat and not PvECombat.objects.filter(character=character, status='active').exists():
+            character.in_combat = False
+            try:
+                character.save(update_fields=['in_combat'])
+            except Exception:
+                character.save()
+        # Clean up stale flags: monster marked in combat but no active row
+        monster_active = PvECombat.objects.filter(monster=monster, status='active').select_related('character').first()
+        if monster.in_combat and not monster_active:
+            monster.in_combat = False
+            monster.current_target = None
+            try:
+                monster.save(update_fields=['in_combat', 'current_target'])
+            except Exception:
+                monster.save()
+
+        # If monster is actively in combat with someone else, check for staleness before refusing
+        if monster_active and monster_active.character_id != character.id:
+            now = timezone.now()
+            stale = False
+            other = None
+            last_turn = None
+            try:
+                other = monster_active.character
+                last_turn = monster_active.last_turn_at
+                # Consider stale if opponent is offline, not flagged in combat, or no turn for > 8s
+                if not getattr(other, 'is_online', True) or not getattr(other, 'in_combat', True):
+                    stale = True
+                elif last_turn and (now - last_turn).total_seconds() > 8:
+                    stale = True
+                else:
+                    # Fallback to inactivity of combat row itself (> 12s)
+                    if (now - monster_active.updated_at).total_seconds() > 12:
+                        stale = True
+            except Exception as ex:
+                # If anything goes wrong while checking staleness, err on the side of cleanup
+                stale = True
+                try:
+                    logger.warning(f'PvE start staleness check error for monster={monster.id}: {ex}')
+                except Exception:
+                    pass
+            if stale:
+                try:
+                    monster_active.status = 'fled'
+                    monster_active.ended_at = now
+                    monster_active.save(update_fields=['status', 'ended_at', 'updated_at'])
+                    # Release the other character and monster if still flagged
+                    try:
+                        if other and getattr(other, 'in_combat', False):
+                            other.in_combat = False
+                            other.save(update_fields=['in_combat', 'updated_at'])
+                    except Exception:
+                        pass
+                    monster.in_combat = False
+                    monster.current_target = None
+                    monster.save(update_fields=['in_combat', 'current_target', 'updated_at'])
+                    # Log cleanup
+                    try:
+                        logger.warning(f'Cleaned up stale PvECombat {monster_active.id} for monster {monster.id} (last_turn={last_turn}, updated_delta={(now - monster_active.updated_at).total_seconds():.1f}s)')
+                    except Exception:
+                        pass
+                    monster_active = None
+                except Exception as ex:
+                    # If cleanup fails, still refuse to avoid corrupt state
+                    try:
+                        logger.warning(f'PvE stale cleanup failed for monster={monster.id}: {ex}')
+                    except Exception:
+                        pass
+                    return JsonResponse({'success': False, 'error': 'Monster is already in combat', 'error_code': 'monster_in_combat_cleanup_failed'}, status=400)
+            else:
+                try:
+                    logger.info(f'PvE start denied: monster {monster.id} already in active combat (other_char={monster_active.character_id}, last_turn={last_turn}, updated_delta={(now - monster_active.updated_at).total_seconds():.1f}s)')
+                except Exception:
+                    pass
+                return JsonResponse({'success': False, 'error': 'Monster is already in combat', 'error_code': 'monster_in_combat'}, status=400)
+
+        # If character still flagged in combat (shouldn't happen here), try to resume
+        if character.in_combat and monster_active and monster_active.character_id == character.id:
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    f'character_{character.id}',
+                    {'type': 'start_combat_loop', 'combat_id': str(monster_active.id)}
+                )
+            except Exception:
+                pass
             return JsonResponse({
-                'success': False,
-                'error': f'Too far away (need to be within 50m, currently {int(distance)}m)'
-            }, status=400)
-        
-        # Check if monster is already in combat
-        if monster.in_combat:
-            return JsonResponse({
-                'success': False,
-                'error': 'Monster is already in combat'
-            }, status=400)
-        
-        # Start combat
+                'success': True,
+                'resumed': True,
+                'combat': {
+                    'id': str(monster_active.id),
+                    'player_hp': monster_active.character_hp,
+                    'enemy_hp': monster_active.monster_hp,
+                    'enemy': {
+                        'name': monster_active.monster.template.name,
+                        'level': monster_active.monster.template.level,
+                        'max_hp': monster_active.monster.max_hp,
+                    }
+                }
+            })
+
+        # Start new combat
         with transaction.atomic():
             combat = PvECombat.objects.create(
                 character=character,
@@ -752,16 +905,14 @@ def api_pve_combat_start(request):
                 character_hp=character.current_hp,
                 monster_hp=monster.current_hp
             )
-            
             # Set combat states
             character.in_combat = True
             character.save(update_fields=['in_combat'])
-            
             monster.in_combat = True
             monster.current_target = character
             monster.save(update_fields=['in_combat', 'current_target'])
         
-        # Trigger PK-style server-driven combat loop over WebSocket for this character
+        # Trigger server-driven combat loop over WebSocket for this character
         try:
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(

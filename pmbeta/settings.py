@@ -128,22 +128,27 @@ else:
         }
     }
 
-# WebSocket/Channels configuration - disabled for debugging
-# if 'REDIS_URL' in os.environ:
-#     CHANNEL_LAYERS = {
-#         'default': {
-#             'BACKEND': 'channels_redis.core.RedisChannelLayer',
-#             'CONFIG': {
-#                 'hosts': [os.environ.get('REDIS_URL')],
-#             },
-#         },
-#     }
-# else:
-#     CHANNEL_LAYERS = {
-#         'default': {
-#             'BACKEND': 'channels.layers.InMemoryChannelLayer',
-#         },
-#     }
+# Helper: sanitize an optional REDIS_URL, ignore common placeholders
+from urllib.parse import urlparse
+
+def _valid_redis_url(raw: str | None) -> str | None:
+    try:
+        if not raw:
+            return None
+        s = raw.strip()
+        # Ignore placeholder patterns from example envs
+        if 'user:password@host:port' in s or s.endswith('@host:port') or s.endswith(':port'):
+            return None
+        u = urlparse(s)
+        # Must be redis or rediss scheme
+        if u.scheme not in ('redis', 'rediss'):
+            return None
+        # Ensure netloc and numeric port if present
+        # Accessing u.port will raise ValueError if not numeric; treat as invalid
+        _ = u.port  # may be None if not provided, which is ok
+        return s
+    except Exception:
+        return None
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -310,7 +315,8 @@ if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
     WHITENOISE_USE_FINDERS = True
     
     # Redis configuration for WebSocket channels (if available)
-    REDIS_URL = os.environ.get('REDIS_URL')
+    RAW_REDIS_URL = os.environ.get('REDIS_URL')
+    REDIS_URL = _valid_redis_url(RAW_REDIS_URL)
     if REDIS_URL:
         CHANNEL_LAYERS = {
             'default': {
@@ -349,7 +355,7 @@ if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
         else:
             SESSION_ENGINE = 'django.contrib.sessions.backends.db'
     else:
-        # Fallback configurations when Redis not available
+        # Fallback configurations when Redis not available or invalid
         CHANNEL_LAYERS = {
             'default': {
                 'BACKEND': 'channels.layers.InMemoryChannelLayer',
@@ -357,8 +363,9 @@ if os.environ.get('RAILWAY_ENVIRONMENT') == 'production':
         }
         SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 else:
-    # Development: prefer Redis if REDIS_URL is provided
-    REDIS_URL = os.environ.get('REDIS_URL')
+    # Development: prefer Redis if REDIS_URL is valid
+    RAW_REDIS_URL = os.environ.get('REDIS_URL')
+    REDIS_URL = _valid_redis_url(RAW_REDIS_URL)
     if REDIS_URL:
         CHANNEL_LAYERS = {
             'default': {
@@ -394,7 +401,7 @@ else:
         else:
             SESSION_ENGINE = 'django.contrib.sessions.backends.db'
     else:
-        # Fallback to in-memory layer when Redis is not configured
+        # Fallback to in-memory layer when Redis is not configured or invalid
         CHANNEL_LAYERS = {
             'default': {
                 'BACKEND': 'channels.layers.InMemoryChannelLayer',
