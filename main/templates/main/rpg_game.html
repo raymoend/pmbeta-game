@@ -873,6 +873,25 @@
             .stat-bar {
                 min-width: 120px;
             }
+            /* PK-style mobile bottom dock */
+            .action-bar {
+                position: fixed;
+                left: 0; right: 0; bottom: 0;
+                display: flex;
+                gap: 8px;
+                justify-content: space-around;
+                background: rgba(17,24,39,0.92);
+                border-top: 1px solid rgba(255,255,255,0.08);
+                padding: 10px;
+                z-index: 1700;
+            }
+            .action-bar .btn {
+                flex: 1;
+                padding: 12px 8px;
+                font-size: 1rem;
+                border-radius: 10px;
+                font-weight: 700;
+            }
         }
     </style>
 </head>
