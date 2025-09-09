@@ -2824,30 +2824,49 @@ let berriesInterval = null;
                 if (!res.ok || data.success === false) { showMessage('Vendor unavailable', 'error'); return; }
                 const buys = Array.isArray(data.buys) ? data.buys : [];
                 const sells = Array.isArray(data.sells) ? data.sells : [];
-                const modal = document.createElement('div');
-                modal.id = 'blackMarketModal';
-                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9000;';
-                modal.innerHTML = `
-                  <div style="background:#0b1220;border:1px solid #1f2937;border-radius:10px;min-width:320px;max-width:520px;padding:14px;color:#e5e7eb;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                      <strong>Black Market</strong>
-                      <button id="bmClose" style="background:#374151;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Close</button>
+
+                // Remove existing drawer if present
+                try { document.getElementById('blackMarketDrawer')?.remove(); } catch(_) {}
+
+                // Create a right-side drawer that does not block the map
+                const drawer = document.createElement('div');
+                drawer.id = 'blackMarketDrawer';
+                drawer.style.cssText = [
+                  'position:fixed',
+                  'top:60px',
+                  'right:0',
+                  'height:calc(100% - 60px)',
+                  'width:360px',
+                  'max-width:80vw',
+                  'background:#0b1220',
+                  'border-left:1px solid #1f2937',
+                  'box-shadow:-8px 0 24px rgba(0,0,0,0.35)',
+                  'z-index:11000',
+                  'color:#e5e7eb',
+                  'display:flex',
+                  'flex-direction:column'
+                ].join(';');
+                drawer.innerHTML = `
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #1f2937;">
+                    <strong>Black Market</strong>
+                    <button id="bmClose" style="background:#374151;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Close</button>
+                  </div>
+                  <div style="display:flex;gap:12px;padding:12px;overflow:auto;flex:1;min-height:0;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-weight:600;margin-bottom:6px;">We Buy</div>
+                      <div id="bmBuyList"></div>
                     </div>
-                    <div style="display:flex;gap:12px;margin-top:10px;">
-                      <div style="flex:1;">
-                        <div style="font-weight:600;margin-bottom:6px;">We Buy</div>
-                        <div id="bmBuyList"></div>
-                      </div>
-                      <div style="flex:1;">
-                        <div style="font-weight:600;margin-bottom:6px;">We Sell</div>
-                        <div id="bmSellList"></div>
-                      </div>
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-weight:600;margin-bottom:6px;">We Sell</div>
+                      <div id="bmSellList"></div>
                     </div>
                   </div>`;
-                document.body.appendChild(modal);
-                modal.querySelector('#bmClose').addEventListener('click', ()=>{ try { modal.remove(); } catch(_) {} });
-                const buyList = modal.querySelector('#bmBuyList');
-                const sellList = modal.querySelector('#bmSellList');
+                document.body.appendChild(drawer);
+
+                drawer.querySelector('#bmClose').addEventListener('click', ()=>{ try { drawer.remove(); } catch(_) {} });
+                const buyList = drawer.querySelector('#bmBuyList');
+                const sellList = drawer.querySelector('#bmSellList');
+
                 buyList.innerHTML = buys.map(b => `
                   <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0;gap:8px;">
                     <span>${(b.name||'').toString().replace(/</g,'&lt;')}</span>
@@ -2864,8 +2883,9 @@ let berriesInterval = null;
                       <button class="bm-buy" data-name="${s.name}" data-price="${s.price_per_unit}" style="margin-left:6px;background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Buy @ ${s.price_per_unit}g</button>
                     </div>
                   </div>`).join('');
+
                 // Wire actions
-                modal.querySelectorAll('.bm-sell').forEach(btn => {
+                drawer.querySelectorAll('.bm-sell').forEach(btn => {
                   btn.addEventListener('click', async (e) => {
                     const wrap = e.target.closest('div');
                     const qtyInput = wrap.querySelector('input');
@@ -2873,7 +2893,7 @@ let berriesInterval = null;
                     await actBlackMarket('sell', btn.getAttribute('data-name'), qty);
                   });
                 });
-                modal.querySelectorAll('.bm-buy').forEach(btn => {
+                drawer.querySelectorAll('.bm-buy').forEach(btn => {
                   btn.addEventListener('click', async (e) => {
                     const wrap = e.target.closest('div');
                     const qtyInput = wrap.querySelector('input');
@@ -3713,7 +3733,14 @@ let berriesInterval = null;
 
         function toggleSidePanel() {
             const panel = document.getElementById('sidePanel');
-            panel.classList.toggle('open');
+            if (!panel) return;
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                panel.classList.toggle('open');
+            } else {
+                panel.classList.toggle('collapsed');
+                try { localStorage.setItem('panelCollapsed', panel.classList.contains('collapsed') ? 'true' : 'false'); } catch(_) {}
+            }
         }
 
         function showMessage(text, type = 'info') {
@@ -4378,6 +4405,23 @@ function addPlayerMarker() {
         // Initialize everything when page loads
 window.addEventListener('load', function() {
             initializeMap();
+            // Default panel collapsed on desktop; restore preference if stored
+            try {
+                const panel = document.getElementById('sidePanel');
+                if (panel) {
+                    const pref = localStorage.getItem('panelCollapsed');
+                    const isMobile = window.innerWidth <= 768;
+                    if (!isMobile) {
+                        if (pref === null || pref === 'true') {
+                            panel.classList.add('collapsed');
+                        } else {
+                            panel.classList.remove('collapsed');
+                        }
+                    } else {
+                        panel.classList.remove('open');
+                    }
+                }
+            } catch(_) {}
             try { initChatUI(); } catch(_) {}
             try { updateHealButtonState(); } catch (_) {}
             try { renderCombatLog(); } catch(_) {}
