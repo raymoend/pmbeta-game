@@ -2015,8 +2015,17 @@
                       <div style="font-size: 0.8rem; color:#95a5a6;">Lvl ${b.level || 1} · ${dist}m · HP ${(b.hp?.current||0)}/${(b.hp?.max||0)} · ${status}</div>
                     </div>
                     <div style="display:flex; gap:6px;">
-                      ${own ? `<button class="btn" style="background:#2ecc71;color:white;" onclick="collectBuildingRevenue('${b.id}')">Collect</button>` : ''}
-                      ${own ? `<button class="btn" style="background:#6b7280;color:white;" onclick="repairBuilding('${b.id}')" ${dmg>0?'':'disabled'}>Repair</button>` : `<button class="btn" style="background:#e74c3c;color:white;" onclick="attackBuilding('${b.id}')
+                      ${own 
+                        ? `<button class="btn" style="background:#2ecc71;color:white;" onclick="collectBuildingRevenue('${b.id}')">Collect</button>
+                           <button class="btn" style="background:#6b7280;color:white;" onclick="repairBuilding('${b.id}')" ${dmg>0?'':'disabled'}>Repair</button>`
+                        : `<button class="btn" style="background:#e74c3c;color:white;" onclick="attackBuilding('${b.id}')">Attack</button>`
+                      }
+                    </div>`;
+                cont.appendChild(el);
+            });
+        }
+
+        function updateResourceMarkers(resources) {
             if (!gameState.map) return;
             if (!gameState.resourceMarkers) gameState.resourceMarkers = {};
             const ids = new Set((resources || []).map(r => String(r.id)));
@@ -2075,7 +2084,6 @@
                     gameState.resourceMarkers[id] = marker;
                 }
             });
-        }
 
         async function harvestResource(resourceId) {
             try {
@@ -2138,7 +2146,7 @@
                 body: JSON.stringify({})
             }).then(r => r.json()).then(d => {
                 if (!d || d.success === false) { showMessage((d && (d.error || d.message)) || 'Attack failed', 'error'); return; }
-                showMessage(`Dealt ${d.damage} damage${d.gold_stolen?`, stole ${d.gold_stolen}g`:''}`, 'success');
+                showMessage(`Dealt ${d.damage} damage${d.gold_stolen ? ', stole ' + d.gold_stolen + 'g' : ''}`, 'success');
                 fetchNearbyBuildings();
             }).catch(() => {});
         }
