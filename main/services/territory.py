@@ -225,7 +225,7 @@ def spawn_monsters_in_flag(flag: TerritoryFlag, count: int = 5, template_filter=
     if not templates:
         # Create a simple default template if none exist
         t = MonsterTemplate.objects.create(
-            name='Territory Thug', description='A hostile NPC', level=2,
+            name='Territory Guard', description='A vigilant defender', level=2,
             base_hp=45, strength=10, defense=6, agility=10,
             base_experience=25, base_gold=15, is_aggressive=True,
             respawn_time_minutes=30
