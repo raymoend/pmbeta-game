@@ -779,11 +779,11 @@ def api_pve_combat_start(request):
             try:
                 channel_layer = get_channel_layer()
                 async_to_sync(channel_layer.group_send)(
-                f'character_{character.id}',
-                {'type': 'start_combat_loop', 'combat_id': str(active.id)}
-            )
-        except Exception:
-            pass
+                    f'character_{character.id}',
+                    {'type': 'start_combat_loop', 'combat_id': str(active.id)}
+                )
+            except Exception:
+                pass
         try:
             logger.info(f"[combat] PvE resume: char={character.id} combat={active.id} vs monster={active.monster_id}")
         except Exception:
