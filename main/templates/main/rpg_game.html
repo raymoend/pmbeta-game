@@ -1861,7 +1861,7 @@
                 const captureS = f.capture_remaining_s != null ? f.capture_remaining_s : (f.capture_window_ends_at ? Math.max(0, Math.floor((new Date(f.capture_window_ends_at).getTime() - now)/1000)) : 0);
                 const el = document.createElement('div');
                 el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
-                const statusLine = `${f.status}${protectS>0?` · Protected ${formatDuration(protectS)}`:''}${captureS>0?` · Capture ${formatDuration(captureS)}`:''}`;
+                const statusLine = String(f.status) + (protectS>0 ? ' · Protected ' + formatDuration(protectS) : '') + (captureS>0 ? ' · Capture ' + formatDuration(captureS) : '');
                 el.innerHTML = `
                     <div style=\"display:flex; flex-direction:column;\">
                       <div style=\"font-weight:600; color:#ecf0f1;\">${(f.name || 'Flag')}</div>
@@ -2009,18 +2009,23 @@
                 const status = (b.status || 'active');
                 const el = document.createElement('div');
                 el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
+
+                let actions = '';
+                if (own) {
+                    actions =
+                        '<button class="btn" style="background:#2ecc71;color:white;" onclick="collectBuildingRevenue(\'' + String(b.id) + '\')">Collect</button>' +
+                        '<button class="btn" style="background:#6b7280;color:white;" onclick="repairBuilding(\'' + String(b.id) + '\')" ' + (dmg > 0 ? '' : 'disabled') + '>Repair</button>';
+                } else {
+                    actions =
+                        '<button class="btn" style="background:#e74c3c;color:white;" onclick="attackBuilding(\'' + String(b.id) + '\')">Attack</button>';
+                }
+
                 el.innerHTML = `
                     <div style="display:flex; flex-direction:column;">
                       <div style="font-weight:600; color:#ecf0f1;">${(b.name || b.type || 'Building')}</div>
                       <div style="font-size: 0.8rem; color:#95a5a6;">Lvl ${b.level || 1} · ${dist}m · HP ${(b.hp?.current||0)}/${(b.hp?.max||0)} · ${status}</div>
                     </div>
-                    <div style="display:flex; gap:6px;">
-                      ${own 
-                        ? `<button class="btn" style="background:#2ecc71;color:white;" onclick="collectBuildingRevenue('${b.id}')">Collect</button>
-                           <button class="btn" style="background:#6b7280;color:white;" onclick="repairBuilding('${b.id}')" ${dmg>0?'':'disabled'}>Repair</button>`
-                        : `<button class="btn" style="background:#e74c3c;color:white;" onclick="attackBuilding('${b.id}')">Attack</button>`
-                      }
-                    </div>`;
+                    <div style="display:flex; gap:6px;">${actions}</div>`;
                 cont.appendChild(el);
             });
         }
@@ -2044,7 +2049,7 @@
                 const iconUrl = getResourceIconUrl(r.type || r.resource_type);
                 const canHarvest = !!r.can_harvest && (typeof r.distance === 'number' ? r.distance <= 50 : true);
                 const readyIn = typeof r.ready_in_seconds === 'number' ? r.ready_in_seconds : 0;
-                const readyLine = canHarvest ? '<span style="color:#16a34a;font-weight:600;">Ready</span>' : (readyIn > 0 ? `Ready in ${formatDuration(readyIn)}` : 'Not ready');
+                const readyLine = canHarvest ? '<span style=\"color:#16a34a;font-weight:600;\">Ready</span>' : (readyIn > 0 ? 'Ready in ' + formatDuration(readyIn) : 'Not ready');
                 const popupHTML = `
                     <div style=\"font-family:Segoe UI;color:#333;min-width:220px;\">
                         <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px;\">
@@ -2180,7 +2185,7 @@
                 const iconUrl = getResourceIconUrl(r.type || r.resource_type);
                 const canHarvest = !!r.can_harvest && (typeof r.distance === 'number' ? r.distance <= 50 : true);
                 const readyIn = typeof r.ready_in_seconds === 'number' ? r.ready_in_seconds : 0;
-                const readyText = canHarvest ? '<span style="color:#22c55e;">Ready</span>' : (readyIn > 0 ? `Ready in ${formatDuration(readyIn)}` : 'Not ready');
+                const readyText = canHarvest ? '<span style=\"color:#22c55e;\">Ready</span>' : (readyIn > 0 ? 'Ready in ' + formatDuration(readyIn) : 'Not ready');
                 const el = document.createElement('div');
                 el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
                 const iconSpan = iconUrl ? `<img src="${iconUrl}" style="width:18px;height:18px;vertical-align:middle;" onerror="this.replaceWith(document.createTextNode('${emoji}'))">` : `<span style=\"font-size:18px;\">${emoji}</span>`;
@@ -3576,20 +3581,23 @@ let berriesInterval = null;
             const gainedGold = typeof result.gold_gained === 'number' ? result.gold_gained : null;
             const gainedXP = typeof result.experience_gained === 'number' ? result.experience_gained : null;
             const dropsHTML = drops.length ? (
-                '<div class="drops-list">' + drops.map(d => (
-                    `<div class="drop-item"><span>${(d.name || '').toString().replace(/</g,'&lt;')}</span><span>x${d.quantity || 1}</span></div>`
+                '<div class=\"drops-list\">' + drops.map(d => (
+                    `<div class=\"drop-item\"><span>${(d.name || '').toString().replace(/</g,'&lt;')}</span><span>x${d.quantity || 1}</span></div>`
                 )).join('') + '</div>'
-            ) : '<div class="victory-sub">No items dropped.</div>';
+            ) : '<div class=\"victory-sub\">No items dropped.</div>';
             const territoryRadiusMeters = Math.round(flagRadiusForLevel(1));
+            const rewardsHTML = (gainedXP !== null || gainedGold !== null)
+                ? ('<div class=\"drops-list\"><div class=\"drop-item\"><span>Experience</span><span>+' + (gainedXP ?? 0) + '</span></div><div class=\"drop-item\"><span>Gold</span><span>+' + (gainedGold ?? 0) + '</span></div></div>')
+                : '';
             modal.innerHTML = `
-                <div class="victory-card">
-                    <div class="victory-title">Victory!</div>
-                    <div class="victory-sub">${(result.message || 'You defeated the monster.').toString().replace(/\</g,'\u0026lt;')}</div>
-                    ${gainedXP !== null || gainedGold !== null ? `<div class="drops-list"><div class="drop-item"><span>Experience</span><span>+${gainedXP ?? 0}</span></div><div class="drop-item"><span>Gold</span><span>+${gainedGold ?? 0}</span></div></div>` : ''}
+                <div class=\"victory-card\">
+                    <div class=\"victory-title\">Victory!</div>
+                    <div class=\"victory-sub\">${(result.message || 'You defeated the monster.').toString().replace(/\\</g,'\\u0026lt;')}</div>
+                    ${rewardsHTML}
                     ${dropsHTML}
-                    <div class="victory-actions">
-                        <button class="btn btn-inventory" id="victoryInventoryBtn">Open Inventory</button>
-                        <button class="btn btn-close-victory" id="victoryCloseBtn">Close</button>
+                    <div class=\"victory-actions\">
+                        <button class=\"btn btn-inventory\" id=\"victoryInventoryBtn\">Open Inventory</button>
+                        <button class=\"btn btn-close-victory\" id=\"victoryCloseBtn\">Close</button>
                     </div>
                 </div>`;
             modal.style.display = 'flex';
