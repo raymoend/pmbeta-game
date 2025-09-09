@@ -784,11 +784,11 @@ def api_pve_combat_start(request):
                 )
             except Exception:
                 pass
-        try:
-            logger.info(f"[combat] PvE resume: char={character.id} combat={active.id} vs monster={active.monster_id}")
-        except Exception:
-            pass
-        return JsonResponse({
+            try:
+                logger.info(f"[combat] PvE resume: char={character.id} combat={active.id} vs monster={getattr(active, 'monster_id', None)}")
+            except Exception:
+                pass
+            return JsonResponse({
                 'success': True,
                 'resumed': True,
                 'combat': {
