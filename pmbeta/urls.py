@@ -80,7 +80,8 @@ urlpatterns = [
     path('api/resources/collect/<uuid:resource_id>/', views.api_collect_resource, name='api_collect_resource_root'),
     path('api/resources/check-spawn/', views.api_check_resource_spawn, name='api_check_resource_spawn_root'),
     # Root alias for inventory berries (to avoid 404 then fallback)
-    path('api/inventory/berries/', views_resources.use_berries, name='api_use_berries_root'),
+path('api/inventory/berries/', views_resources.use_berries, name='api_use_berries_root'),
+    path('api/inventory/berries/tick/', views_resources.berries_tick, name='api_berries_tick_root'),
     
     # path('pk/', include('main.pk_urls')),  # Disabled - missing PK models
 ]

@@ -14,6 +14,7 @@ import math
 from datetime import timedelta
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.core.cache import cache
 
 from .models import (
     Character, ResourceNode, ResourceHarvest, 
@@ -339,54 +340,112 @@ def use_item(request):
 @require_http_methods(["POST"])
 @login_required
 def use_berries(request):
-    """Quick heal using Energy Berries (themed) with legacy fallback to 'berries'"""
+    """Use Energy Berries with heal-over-time (HoT): 5 ticks, 1/sec, total 75% max HP.
+    Consumes one 'Energy Berries' (or legacy 'berries'). Starts a short HoT session
+    stored in cache; client should call /api/inventory/berries/tick/ once per second.
+    """
     try:
         character = request.user.character
     except Character.DoesNotExist:
         return JsonResponse({'error': 'Character not found'}, status=404)
     
     # Check if character needs healing
-    if character.current_hp >= character.max_hp:
+    if int(character.current_hp) >= int(character.max_hp):
         return JsonResponse({'error': 'Character is already at full health'}, status=400)
     
     # Check if character can act
     if not character.can_act():
         return JsonResponse({'error': 'Character cannot act (in combat or no stamina)'}, status=400)
     
-    # Prefer Energy Berries; fallback to legacy 'berries'
+    # Consume one berry item (Energy Berries preferred; fallback to 'berries')
     success, message = character.use_item('Energy Berries', 1)
     if not success:
         success, message = character.use_item('berries', 1)
-    
     if not success:
         return JsonResponse({'error': message}, status=400)
-    
-    # Get updated character stats
-    character.refresh_from_db()
 
-    # Push updates after berries use
+    # Calculate HoT plan
+    try:
+        import math as _m
+        max_hp = int(character.max_hp)
+        cur_hp = int(character.current_hp)
+        target_restore_total = int(_m.floor(max_hp * 0.75))
+        missing = max(0, max_hp - cur_hp)
+        total_to_restore = max(0, min(target_restore_total, missing))
+        ticks_total = 5
+        per_tick = int(_m.ceil(total_to_restore / float(ticks_total))) if total_to_restore > 0 else 0
+        session = {
+            'remaining': ticks_total,
+            'outstanding': total_to_restore,
+            'per_tick': per_tick,
+        }
+        cache.set(f'berries_heal:{character.id}', session, 20)  # short TTL
+    except Exception:
+        # If any error computing HoT, just no-op gracefully
+        session = {'remaining': 0, 'outstanding': 0, 'per_tick': 0}
+
+    # Push inventory update (item was consumed)
     try:
         channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'character_{character.id}',
-            {'type': 'inventory_update'}
-        )
-        async_to_sync(channel_layer.group_send)(
-            f'character_{character.id}',
-            {'type': 'character_update'}
-        )
+        async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
     except Exception:
         pass
-    
+
     return JsonResponse({
         'success': True,
-        'message': message,
-        'character_stats': {
-            'current_hp': character.current_hp,
-            'max_hp': character.max_hp,
-            'hp_percentage': round((character.current_hp / character.max_hp) * 100, 1)
+        'message': 'Berries healing started',
+        'berry_heal': {
+            'active': session.get('remaining', 0) > 0 and session.get('outstanding', 0) > 0,
+            'ticks_total': 5,
+            'ticks_remaining': session.get('remaining', 0),
+            'per_tick': session.get('per_tick', 0),
+            'total_to_restore': session.get('outstanding', 0)
         }
     })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def berries_tick(request):
+    """Apply one berries HoT tick if active. Returns updated HP and remaining ticks."""
+    try:
+        character = request.user.character
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    sess_key = f'berries_heal:{character.id}'
+    sess = cache.get(sess_key)
+    if not sess or int(sess.get('remaining', 0)) <= 0 or int(sess.get('outstanding', 0)) <= 0:
+        return JsonResponse({'success': False, 'error': 'no_berry_heal_active'}, status=400)
+    try:
+        remaining = int(sess.get('remaining', 0))
+        outstanding = int(sess.get('outstanding', 0))
+        per_tick = int(sess.get('per_tick', 0))
+        delta = max(0, min(per_tick, outstanding))
+        # Apply heal
+        new_hp = min(int(character.max_hp), int(character.current_hp) + delta)
+        character.current_hp = new_hp
+        character.save(update_fields=['current_hp'])
+        # Update session
+        remaining -= 1
+        outstanding = max(0, outstanding - delta)
+        if remaining <= 0 or outstanding <= 0 or int(character.current_hp) >= int(character.max_hp):
+            cache.delete(sess_key)
+            active = False
+            ticks_remaining = max(0, remaining)
+        else:
+            cache.set(sess_key, {'remaining': remaining, 'outstanding': outstanding, 'per_tick': per_tick}, 20)
+            active = True
+            ticks_remaining = remaining
+        # Push HUD update
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'current_hp': character.current_hp, 'max_hp': character.max_hp, 'active': active, 'ticks_remaining': ticks_remaining})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'server_error', 'message': str(e)}, status=500)
 
 
 @csrf_exempt

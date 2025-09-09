@@ -2392,7 +2392,7 @@ if (dissolvedFeature) {
             const qty = getBerriesCount();
             const shouldDisable = full || qty <= 0;
             btn.disabled = !!shouldDisable;
-            btn.title = shouldDisable ? (full ? 'HP is full' : 'No berries') : 'Use a berry to heal 25% HP';
+btn.title = shouldDisable ? (full ? 'HP is full' : 'No berries') : 'Use a berry to heal 75% HP over 5 seconds';
             // Optional: reflect qty in label
             try {
                 const base = '🍓 Heal with berries';
@@ -2400,6 +2400,7 @@ if (dissolvedFeature) {
             } catch (_) {}
         }
 
+let berriesInterval = null;
         async function healWithBerries() {
             try {
                 const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
@@ -2425,27 +2426,56 @@ if (dissolvedFeature) {
                 const { res, data } = attempt;
 
                 if (!res.ok || !data || data.success === false) {
-                    showMessage((data && data.error) || 'Failed to use berries', 'error');
+                    showMessage((data && data.error) || 'Failed to start berries healing', 'error');
                     return;
                 }
-                const stats = data.character_stats || {};
-                if (typeof stats.current_hp === 'number' && typeof stats.max_hp === 'number') {
-                    gameState.character.current_hp = stats.current_hp;
-                    gameState.character.max_hp = stats.max_hp;
+
+                const bh = data.berry_heal || {};
+                if (bh && bh.active) {
+                    showMessage('Berries healing started (75% over 5s)', 'success');
+                    if (berriesInterval) { try { clearInterval(berriesInterval); } catch(_) {} }
+                    let remaining = Number(bh.ticks_remaining || 5);
+                    berriesInterval = setInterval(async () => {
+                        try {
+                            const res2 = await fetch('/api/inventory/berries/tick/', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                                credentials: 'same-origin',
+                                body: JSON.stringify({})
+                            });
+                            const d2 = await res2.json().catch(()=>({success:false}));
+                            if (!res2.ok || d2.success === false) {
+                                clearInterval(berriesInterval); berriesInterval = null; return;
+                            }
+                            if (typeof d2.current_hp === 'number') {
+                                gameState.character.current_hp = d2.current_hp;
+                                updateCharacterStats(gameState.character);
+                            }
+                            remaining = (typeof d2.ticks_remaining === 'number') ? d2.ticks_remaining : (remaining - 1);
+                            if (!d2.active || remaining <= 0) {
+                                clearInterval(berriesInterval); berriesInterval = null;
+                                try { updateHealButtonState(); } catch(_) {}
+                            }
+                        } catch (_) {
+                            clearInterval(berriesInterval); berriesInterval = null;
+                        }
+                    }, 1000);
+                } else {
+                    // Back-compat immediate heal response
+                    const stats = data.character_stats || {};
+                    if (typeof stats.current_hp === 'number' && typeof stats.max_hp === 'number') {
+                        gameState.character.current_hp = stats.current_hp;
+                        gameState.character.max_hp = stats.max_hp;
+                        updateCharacterStats(gameState.character);
+                    }
+                    showMessage(data.message || 'Berries used', 'success');
                 }
-                if (typeof stats.current_mana === 'number') gameState.character.current_mana = stats.current_mana;
-                if (typeof stats.max_mana === 'number') gameState.character.max_mana = stats.max_mana;
-                if (typeof stats.current_stamina === 'number') gameState.character.current_stamina = stats.current_stamina;
-                if (typeof stats.max_stamina === 'number') gameState.character.max_stamina = stats.max_stamina;
-                updateCharacterStats(gameState.character);
-                showMessage(data.message || 'Healed with berries!', 'success');
                 try { loadInventory(); } catch (_) {}
                 updateHealButtonState();
             } catch (e) {
                 console.error('healWithBerries error', e);
                 showMessage('Failed to use berries', 'error');
             } finally {
-                // Re-enable if still applicable
                 try { updateHealButtonState(); } catch(_) {}
             }
         }
@@ -3199,6 +3229,30 @@ if (dissolvedFeature) {
         }
 
         // Victory popup
+        function showPlayerMenu() {
+            try {
+                const map = gameState.map; if (!map) return;
+                const pt = map.project({ lng: gameState.character.lon, lat: gameState.character.lat });
+                const menu = document.createElement('div');
+                menu.style.cssText = 'position:fixed;background:rgba(17,24,39,0.96);border:1px solid rgba(255,255,255,0.12);border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,0.5);padding:8px;z-index:2000;min-width:180px;';
+                menu.style.left = Math.max(8, Math.min(window.innerWidth-200, pt.x - 90)) + 'px';
+                menu.style.top = Math.max(80, Math.min(window.innerHeight-160, pt.y - 120)) + 'px';
+                menu.innerHTML = `
+                    <div style="font-weight:700;color:#e5e7eb;margin-bottom:6px;">Player Actions</div>
+                    <button id="pm_berries" class="btn" style="display:block;width:100%;margin:4px 0;background:#16a34a;color:#fff;">🍓 Use Berries</button>
+                    <button id="pm_heal" class="btn" style="display:block;width:100%;margin:4px 0;background:#22c55e;color:#fff;">🌿 Heal Nearby</button>
+                    <button id="pm_close" class="btn" style="display:block;width:100%;margin:4px 0;background:#6b7280;color:#fff;">Close</button>
+                `;
+                document.body.appendChild(menu);
+                const cleanup = () => { try { if (menu && menu.parentNode) menu.parentNode.removeChild(menu); } catch(_) {} document.removeEventListener('click', onDoc); };
+                const onDoc = (ev) => { try { if (!menu.contains(ev.target)) cleanup(); } catch(_) { cleanup(); } };
+                document.addEventListener('click', onDoc);
+                menu.querySelector('#pm_berries')?.addEventListener('click', (e) => { e.stopPropagation(); cleanup(); healWithBerries(); });
+                menu.querySelector('#pm_heal')?.addEventListener('click', (e) => { e.stopPropagation(); cleanup(); claimEnvironmentalHeal(); });
+                menu.querySelector('#pm_close')?.addEventListener('click', (e) => { e.stopPropagation(); cleanup(); });
+            } catch(_) {}
+        }
+
         function animateItemDrops(result) {
             const drops = Array.isArray(result.drops) ? result.drops : [];
             if (!drops.length) return;
@@ -3860,7 +3914,7 @@ if (dissolvedFeature) {
         }
         
         // Update addPlayerMarker to store reference
-        function addPlayerMarker() {
+function addPlayerMarker() {
             // Add player location marker
             playerMarker = new mapboxgl.Marker({
                 color: '#3498db',
@@ -3868,6 +3922,16 @@ if (dissolvedFeature) {
             })
             .setLngLat([gameState.character.lon, gameState.character.lat])
             .addTo(gameState.map);
+            try {
+                const el = playerMarker.getElement ? playerMarker.getElement() : null;
+                if (el) {
+                    el.style.cursor = 'pointer';
+                    el.addEventListener('click', (e) => {
+                        try { e.stopPropagation(); } catch(_) {}
+                        showPlayerMenu();
+                    });
+                }
+            } catch(_) {}
         }
 
         // Quick actions via keyboard
