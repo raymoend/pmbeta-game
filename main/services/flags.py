@@ -149,15 +149,8 @@ def place_flag(user: User, lat: float, lon: float, name: str | None = None) -> T
     if (q_new, r_new) in occupied:
         raise FlagError('occupied', 'This hex is already occupied by a flag')
 
-    # If player already has flags, enforce adjacency: the target cell must be adjacent to existing owned territory
-    if has_any:
-        owned_cells = set(hex_id_for_latlon(f.lat, f.lon) for f in TF.objects.filter(owner=user).only('lat','lon'))
-        # Neighbor directions for flat-top axial
-        neigh = [(+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)]
-        # Accept either neighbor orientation; addition is more intuitive when thinking "new next to existing"
-        is_adjacent = any(((q_new - dq, r_new - dr) in owned_cells) or ((q_new + dq, r_new + dr) in owned_cells) for (dq, dr) in neigh)
-        if not is_adjacent:
-            raise FlagError('not_adjacent', 'New flags must be placed in a hex adjacent to your territory')
+    # Adjacency to own territory not required: allow placement adjacent to any flags (or standalone),
+    # as long as the target hex is unoccupied and distance constraints are met.
 
     if character.gold < placement_cost:
         raise FlagError('insufficient_gold', 'Not enough gold to place a flag')
@@ -215,6 +208,9 @@ def list_flags_near(lat: float, lon: float, radius_m: float = 2000) -> List[Dict
                 'hp_current': f.hp_current,
                 'hp_max': f.hp_max,
                 'uncollected_balance': int(getattr(f, 'uncollected_balance', 0)),
+                # Timers needed by UI to avoid per-flag detail fetches
+                'protection_ends_at': f.protection_ends_at.isoformat() if getattr(f, 'protection_ends_at', None) else None,
+                'capture_window_ends_at': f.capture_window_ends_at.isoformat() if getattr(f, 'capture_window_ends_at', None) else None,
                 'distance_m': int(d),
                 'color': color_hex,
             })

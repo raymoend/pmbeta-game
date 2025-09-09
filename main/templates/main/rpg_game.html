@@ -1630,24 +1630,35 @@
                   return;
                 }
                 const flags = (data.data && (data.data.flags || data.data)) || [];
-                // Normalize to frontend shape
-                const normalized = flags.map(f => ({
-                    id: String(f.id),
-                    name: f.name || `Flag`,
-                    lat: f.lat,
-                    lon: f.lon,
-                    level: f.level || 1,
-                    owner_id: f.owner_id,
-                    is_mine: f.owner_id === CURRENT_USER_ID,
-                    status: f.status || 'active',
-                    is_private: !!f.is_private,
-                    color: f.color || null,
-                    distance_m: typeof f.distance_m === 'number' ? f.distance_m : Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, f.lat, f.lon))
-                }));
+                // Normalize to frontend shape (now includes timers; no per-flag detail fetch needed)
+                const nowMs = Date.now();
+                const normalized = flags.map(f => {
+                    const pe = f.protection_ends_at ? Date.parse(f.protection_ends_at) : null;
+                    const ce = f.capture_window_ends_at ? Date.parse(f.capture_window_ends_at) : null;
+                    const protect_remaining_s = pe ? Math.max(0, Math.floor((pe - nowMs) / 1000)) : 0;
+                    const capture_remaining_s = ce ? Math.max(0, Math.floor((ce - nowMs) / 1000)) : 0;
+                    return {
+                        id: String(f.id),
+                        name: f.name || `Flag`,
+                        lat: f.lat,
+                        lon: f.lon,
+                        level: f.level || 1,
+                        owner_id: f.owner_id,
+                        is_mine: f.owner_id === CURRENT_USER_ID,
+                        status: f.status || 'active',
+                        is_private: !!f.is_private,
+                        color: f.color || null,
+                        distance_m: typeof f.distance_m === 'number' ? f.distance_m : Math.round(calculateDistance(gameState.character.lat, gameState.character.lon, f.lat, f.lon)),
+                        protection_ends_at: f.protection_ends_at || null,
+                        capture_window_ends_at: f.capture_window_ends_at || null,
+                        protect_remaining_s,
+                        capture_remaining_s,
+                        hp_current: typeof f.hp_current === 'number' ? f.hp_current : undefined,
+                        hp_max: typeof f.hp_max === 'number' ? f.hp_max : undefined,
+                        uncollected_balance: typeof f.uncollected_balance === 'number' ? f.uncollected_balance : undefined,
+                    };
+                });
                 gameState.flags = normalized;
-                // Fetch detailed timers for nearest flags (up to 10)
-                try { fetchFlagDetails(normalized.slice(0, 10).map(x => x.id)); } catch(_) {}
-
                 // Reconcile markers: remove missing, update existing, add new
                 const currentIds = new Set(normalized.map(f => f.id));
                 // Remove markers that are no longer present
@@ -2679,6 +2690,11 @@ if (dissolvedFeature) {
                 showMessage('Connected to game server!', 'success');
                 // Request a fresh inventory snapshot after connect
                 try { loadInventory(); } catch(_) {}
+                // Slow down polling while WS is healthy
+                try {
+                    gameState._pollMs = 60000; // fallback refresh while WS pushes updates
+                    startGameLoop();
+                } catch(_) {}
             };
             
             gameState.websocket.onmessage = function(event) {
@@ -2714,6 +2730,8 @@ if (dissolvedFeature) {
                 console.log('WebSocket disconnected');
                 showMessage('Disconnected from server. Reconnecting...', 'error');
                 
+                // Restore faster polling until WS reconnects
+                try { gameState._pollMs = 5000; startGameLoop(); } catch(_) {}
                 // Reconnect after 3 seconds
                 setTimeout(initializeWebSocket, 3000);
             };
@@ -2721,6 +2739,36 @@ if (dissolvedFeature) {
 
         function handleWebSocketMessage(data) {
             switch (data.type) {
+                case 'character_update': {
+                    try {
+                        const snap = data.data || data.character || {};
+                        updateCharacterStats({
+                            level: snap.level,
+                            experience: snap.experience,
+                            experience_to_next: snap.experience_to_next,
+                            current_hp: snap.health,
+                            max_hp: snap.max_health,
+                            current_mana: snap.mana,
+                            max_mana: snap.max_mana,
+                            current_stamina: snap.stamina,
+                            max_stamina: snap.max_stamina,
+                            gold: snap.gold
+                        });
+                    } catch(_) {}
+                    break;
+                }
+                case 'nearby_data': {
+                    const payload = data.data || {};
+                    try { if (Array.isArray(payload.players)) updateNearbyPlayers(payload.players); } catch(_) {}
+                    try { if (Array.isArray(payload.monsters)) updateMonsters(payload.monsters); } catch(_) {}
+                    try {
+                        const resources = Array.isArray(payload.resources) ? payload.resources : [];
+                        gameState.resources = resources;
+                        updateResourceMarkers(resources);
+                        renderResourcesList(resources);
+                    } catch(_) {}
+                    break;
+                }
                 case 'player_update':
                     updateCharacterStats(data.character);
                     break;
@@ -2846,6 +2894,13 @@ if (dissolvedFeature) {
                 case 'trade_request':
                     handleTradeRequest(data.trade);
                     break;
+                case 'trade_accepted':
+                    try {
+                        const who = (data && (data.accepted_by_name || data.accepted_by || '')).toString();
+                        showMessage(who ? `Trade accepted by ${who}` : 'Trade accepted', 'success');
+                        try { loadInventory(); } catch(_) {}
+                    } catch(_) {}
+                    break;
                 case 'flag_event':
                     // Merge a single-flag update quickly; fallback to refetch
                     try {
@@ -2859,17 +2914,28 @@ if (dissolvedFeature) {
                         }
                     } catch (e) { console.warn('flag_event refresh failed', e); }
                     break;
-                case 'combat_update':
+                case 'combat:log':
                     try {
-                        const c = (data && data.combat) ? data.combat : (data && data.data ? data.data : data);
-                        if (c) {
-                            gameState.activeCombat = c;
-                            try { updateHpTicker(c); } catch (_) {}
-                        }
-                    } catch (e) { console.warn('combat_update handling failed', e); }
+                        const msg = data && (data.message || data.text || (Array.isArray(data.messages) ? data.messages.join('\n') : ''));
+                        if (msg) { try { addCombatLog(msg); } catch(_) {} }
+                        const c = (data && (data.combat || data.data)) || null;
+                        if (c) { try { gameState.activeCombat = c; updateHpTicker(c); } catch(_) {} }
+                    } catch (e) { console.warn('combat:log handling failed', e); }
                     break;
                 case 'combat:damage':
-                    try { showFloatingDamage(data); } catch (e) { console.warn('combat:damage handling failed', e); }
+                    try {
+                        // Ensure ticker is visible even if combat_start wasn\'t seen
+                        if (!gameState.hpTickerEl && data && (data.combat || data.data)) {
+                            const c = data.combat || data.data;
+                            gameState.activeCombat = c;
+                            try { createHpTicker(c); } catch(_) {}
+                        }
+                        // Update ticker if combat snapshot accompanies damage
+                        if (data && (data.combat || data.data)) {
+                            try { updateHpTicker(data.combat || data.data); } catch(_) {}
+                        }
+                        showFloatingDamage(data);
+                    } catch (e) { console.warn('combat:damage handling failed', e); }
                     break;
                 case 'combat_end':
                     try {
@@ -3207,6 +3273,14 @@ if (dissolvedFeature) {
             // Implement trading UI
             showMessage('Trading system coming soon!', 'info');
         }
+        function handleTradeRequest(trade) {
+            try {
+                const from = (trade && (trade.initiator_name || trade.initiator || 'Player')).toString();
+                showMessage(`${from} sent you a trade request`, 'info');
+                // Basic: reflect in inbox panel by triggering a refresh
+                try { refreshInbox(); } catch(_) {}
+            } catch(_) {}
+        }
 
         // PvP System
         function challengePlayer(playerId) {
@@ -3523,12 +3597,14 @@ if (dissolvedFeature) {
         }
 
         function startGameLoop() {
-            // Update game state every 5 seconds (keep resources as a fallback refresh)
-            setInterval(() => {
-                fetchNearbyPlayers();
-                fetchNearbyMonsters();
-                fetchNearbyResources();
-            }, 5000);
+            // Ensure only one poller exists; adjust interval based on WS health
+            try { if (gameState._pollTimer) { clearInterval(gameState._pollTimer); } } catch(_) {}
+            const ms = Math.max(1000, Number(gameState._pollMs || 5000));
+            gameState._pollTimer = setInterval(() => {
+                try { fetchNearbyPlayers(); } catch(_) {}
+                try { fetchNearbyMonsters(); } catch(_) {}
+                try { fetchNearbyResources(); } catch(_) {}
+            }, ms);
         }
 
         function startResourceTicker() {

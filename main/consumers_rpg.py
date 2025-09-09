@@ -159,6 +159,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         """Initiate simplified PK-style combat"""
         try:
             monster_id = data.get('monster_id')
+            try:
+                logger.info(f"[combat] WS start requested: char={self.character.id} monster={monster_id}")
+            except Exception:
+                pass
             if not monster_id:
                 await self.send_error('monster_id required')
                 return
@@ -193,6 +197,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                         'items': items
                     }
                 )
+                try:
+                    logger.info(f"[trade] initiated: from={self.character.id} to={target_character_id} trade={trade_id} items={len(items) if isinstance(items, list) else 'n/a'}")
+                except Exception:
+                    pass
                 await self.send(text_data=json.dumps({
                     'type': 'trade_initiated',
                     'trade_id': str(trade_id),
@@ -225,6 +233,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                     await self.channel_layer.group_send(f"character_{initiator_id}", payload)
                 if recipient_id:
                     await self.channel_layer.group_send(f"character_{recipient_id}", payload)
+                try:
+                    logger.info(f"[trade] accepted: by={self.character.id} trade={trade_id} initiator={initiator_id} recipient={recipient_id}")
+                except Exception:
+                    pass
             else:
                 await self.send_error(res.get('error') or 'trade_accept_failed')
         except Exception as e:
@@ -384,6 +396,25 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
             await self.send(text_data=json.dumps({'type': 'character', 'data': snap}))
         except Exception as e:
             logger.error(f"character_update send failed: {e}")
+
+    async def nearby_update(self, event):
+        """Push a combined nearby payload (players, monsters, resources)."""
+        try:
+            await self.send_nearby_data()
+        except Exception as e:
+            logger.error(f"nearby_update send failed: {e}")
+
+    async def resource_update(self, event):
+        """Forward resource updates to client (single or batch)."""
+        try:
+            payload = {}
+            if 'resource' in event:
+                payload = {'resource': event['resource']}
+            elif 'resources' in event:
+                payload = {'resources': event['resources']}
+            await self.send(text_data=json.dumps({'type': 'resource_update', **payload}))
+        except Exception:
+            pass
 
     # Database helper methods
     @database_sync_to_async
@@ -560,6 +591,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                 except Exception:
                     payload = {'type': 'combat_start', 'combat': snap}
                 await self.send(text_data=json.dumps(payload))
+                try:
+                    logger.info(f"[combat] start: combat={combat_id} char={snap.get('player_id')} enemy={snap.get('enemy_id')}")
+                except Exception:
+                    pass
             self._combat_task = asyncio.create_task(self._run_pve_loop(combat_id))
         except Exception as e:
             logger.error(f"Start combat loop error: {e}")
@@ -648,6 +683,10 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
                         'enemyName': ((result.get('enemy') or {}).get('name')) if result.get('enemy') else None,
                     }
                     await self.send(text_data=json.dumps(end_payload))
+                    try:
+                        logger.info(f"[combat] end: combat={result.get('id')} status={status} char={result.get('player_id')} enemy={result.get('enemy_id')}")
+                    except Exception:
+                        pass
                     try:
                         await self.channel_layer.group_send(self.character_group, {'type': 'character_update'})
                     except Exception:

@@ -767,6 +767,10 @@ def api_pve_combat_start(request):
             pass
         
         monster = Monster.objects.get(id=monster_id, is_alive=True)
+        try:
+            logger.info(f"[combat] PvE start requested: char={character.id} vs monster={monster.id}")
+        except Exception:
+            pass
 
         # If an active combat already exists for this character, resume it
         active = PvECombat.objects.filter(character=character, status='active').select_related('monster__template').first()
@@ -775,12 +779,16 @@ def api_pve_combat_start(request):
             try:
                 channel_layer = get_channel_layer()
                 async_to_sync(channel_layer.group_send)(
-                    f'character_{character.id}',
-                    {'type': 'start_combat_loop', 'combat_id': str(active.id)}
-                )
-            except Exception:
-                pass
-            return JsonResponse({
+                f'character_{character.id}',
+                {'type': 'start_combat_loop', 'combat_id': str(active.id)}
+            )
+        except Exception:
+            pass
+        try:
+            logger.info(f"[combat] PvE resume: char={character.id} combat={active.id} vs monster={active.monster_id}")
+        except Exception:
+            pass
+        return JsonResponse({
                 'success': True,
                 'resumed': True,
                 'combat': {
@@ -919,6 +927,10 @@ def api_pve_combat_start(request):
                 f'character_{character.id}',
                 {'type': 'start_combat_loop', 'combat_id': str(combat.id)}
             )
+        except Exception:
+            pass
+        try:
+            logger.info(f"[combat] PvE started: char={character.id} combat={combat.id} vs monster={monster.id}")
         except Exception:
             pass
         
@@ -1806,6 +1818,10 @@ def api_trade_create(request):
             recipient_gold=requested_gold,
             expires_at=timezone.now() + timedelta(minutes=10)
         )
+        try:
+            logger.info(f"[trade] api created: from={initiator.id} to={recipient.id} trade={trade.id} gold_offered={offered_gold} gold_requested={requested_gold} distance={int(distance)}m")
+        except Exception:
+            pass
         
         return JsonResponse({
             'success': True,
@@ -2004,136 +2020,39 @@ def api_character_move(request):
             # Non-fatal: do not block movement on combat follow errors
             pass
         
-        # Ensure persistent NPC presence inside nearest territory circle (PK-style)
-        try:
-            from .models import TerritoryFlag, Monster, MonsterTemplate, ResourceNode
-            from .services.territory import flag_radius_for_level, point_in_flag, spawn_monsters_in_flag
-            inside_flag = False
-            nearest_flag = None
-            min_d = 1e12
-            ring_r = 0.0
-            for f in TerritoryFlag.objects.filter(status=getattr(TerritoryFlag.Status, 'ACTIVE', 'ACTIVE')):
-                r = flag_radius_for_level(getattr(f, 'level', 1))
-                d = character.distance_to(f.lat, f.lon)
-                if d <= r and d < min_d:
-                    inside_flag = True
-                    nearest_flag = f
-                    min_d = d
-                    ring_r = r
-            if inside_flag and nearest_flag:
-                gs = getattr(settings, 'GAME_SETTINGS', {})
-                MIN_ALIVE = int(gs.get('MIN_FLAG_NPCS', 3))
-                # Ensure NPCs inside flag
-                alive = [m for m in Monster.objects.filter(is_alive=True) if point_in_flag(m.lat, m.lon, nearest_flag)]
-                deficit = max(0, int(MIN_ALIVE) - len(alive))
-                if deficit > 0:
-                    spawn_monsters_in_flag(nearest_flag, count=deficit)
-                # Ensure basic resources inside flag (berries), like PK
-                try:
-                    nodes = [rn for rn in ResourceNode.objects.filter(resource_type='berry_bush') if point_in_flag(rn.lat, rn.lon, nearest_flag)]
-                    if len(nodes) < 2:
-                        need = 2 - len(nodes)
-                        for _ in range(need):
-                            # Sample point in circle near flag center
-                            rr = ring_r * 0.6
-                            import random, math
-                            ang = random.random() * 2*math.pi
-                            dist = rr * (random.random() ** 0.5)
-                            lat_off = dist / 111320.0
-                            lon_off = dist / (111320.0 * max(1e-6, math.cos(nearest_flag.lat * math.pi/180.0)))
-                            ResourceNode.objects.create(
-                                resource_type='berry_bush',
-                                lat=nearest_flag.lat + lat_off * math.sin(ang),
-                                lon=nearest_flag.lon + lon_off * math.cos(ang),
-                                level=max(1, getattr(nearest_flag, 'level', 1)),
-                                quantity=5,
-                                max_quantity=5,
-                                respawn_time=45,
-                            )
-                except Exception:
-                    pass
-            else:
-                # Outside any flag: ensure a baseline of wild NPCs around player
-                gs = getattr(settings, 'GAME_SETTINGS', {})
-                WILD_MIN = int(gs.get('WILD_MIN_NPCS', 5))
-                WILD_R = int(gs.get('WILD_SPAWN_RADIUS_M', 120))
-                # Bounding box filter (approx)
-                lat_eps = WILD_R / 111320.0
-                lon_eps = WILD_R / (111320.0 * max(1e-6, math.cos(math.radians(character.lat))))
-                nearby = Monster.objects.filter(
-                    is_alive=True,
-                    lat__gte=character.lat - lat_eps,
-                    lat__lte=character.lat + lat_eps,
-                    lon__gte=character.lon - lon_eps,
-                    lon__lte=character.lon + lon_eps,
-                )
-                if nearby.count() < WILD_MIN:
-                    to_spawn = WILD_MIN - nearby.count()
-                    # Choose a suitable template (default to Forest Wolf)
-                    tmpl = MonsterTemplate.objects.filter(level__gte=max(1, int(character.level)-1), level__lte=int(character.level)+1).order_by('?').first()
-                    if not tmpl:
-                        tmpl = MonsterTemplate.objects.create(
-                            name='Forest Wolf', description='A wild wolf roaming the forest', level=max(1, int(character.level)),
-                            base_hp=40, strength=12, defense=6, agility=14,
-                            base_experience=30, base_gold=15, is_aggressive=True,
-                            respawn_time_minutes=30
-                        )
-                    import random
-                    for _ in range(to_spawn):
-                        ang = random.random() * 2*math.pi
-                        dist = random.uniform(10.0, float(WILD_R))
-                        lat_off = dist / 111320.0
-                        lon_off = dist / (111320.0 * max(1e-6, math.cos(math.radians(character.lat))))
-                        Monster.objects.create(
-                            template=tmpl,
-                            lat=character.lat + lat_off * math.sin(ang),
-                            lon=character.lon + lon_off * math.cos(ang),
-                            current_hp=tmpl.base_hp,
-                            max_hp=tmpl.base_hp,
-                            is_alive=True,
-                        )
-        except Exception:
-            # Never block movement on spawn/resource errors
-            pass
 
-        # Auto-aggro: if not in combat, check for aggressive monster within 30m and start PvE
-        if not character.in_combat:
-            nearby_aggressive = Monster.objects.filter(
-                lat__gte=character.lat - 0.0003,
-                lat__lte=character.lat + 0.0003,
-                lon__gte=character.lon - 0.0003,
-                lon__lte=character.lon + 0.0003,
-                is_alive=True,
-                in_combat=False,
-                template__is_aggressive=True,
-            ).select_related('template').first()
-            if nearby_aggressive:
-                # Verify actual distance <= 30m
-                dcheck = character.distance_to(nearby_aggressive.lat, nearby_aggressive.lon)
-                if dcheck <= 30:
-                    with transaction.atomic():
-                        combat = PvECombat.objects.create(
-                            character=character,
-                            monster=nearby_aggressive,
-                            character_hp=character.current_hp,
-                            monster_hp=nearby_aggressive.current_hp
-                        )
-                        character.in_combat = True
-                        character.save(update_fields=['in_combat'])
-                        nearby_aggressive.in_combat = True
-                        nearby_aggressive.current_target = character
-                        nearby_aggressive.save(update_fields=['in_combat', 'current_target'])
-                    return JsonResponse({
-                        'success': True,
-                        'lat': character.lat,
-                        'lon': character.lon,
-                        'distance': distance,
-                        'combat_started': True,
-                        'combat_ended': False,
-                        'fled': False,
-                        'combat': get_combat_data(combat)
-                    })
+        # Auto-aggro disabled: NPCs only fight when the player initiates combat (no combat on movement)
+        try:
+            if not character.in_combat:
+                # If an aggressive monster is within 30m, just log for diagnostics (no auto-start)
+                from .models import Monster
+                nearby_aggressive = Monster.objects.filter(
+                    lat__gte=character.lat - 0.0003,
+                    lat__lte=character.lat + 0.0003,
+                    lon__gte=character.lon - 0.0003,
+                    lon__lte=character.lon + 0.0003,
+                    is_alive=True,
+                    in_combat=False,
+                    template__is_aggressive=True,
+                ).select_related('template').first()
+                if nearby_aggressive:
+                    dcheck = character.distance_to(nearby_aggressive.lat, nearby_aggressive.lon)
+                    if dcheck <= 30:
+                        try:
+                            logger.info(f"[combat] auto-aggro suppressed: char={character.id} near monster={nearby_aggressive.id} d={dcheck:.1f}m")
+                        except Exception:
+                            pass
+        except Exception:
+            # Non-fatal
+            pass
         
+        # Push character + nearby updates via WebSocket
+        try:
+            layer = get_channel_layer()
+            async_to_sync(layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+            async_to_sync(layer.group_send)(f'character_{character.id}', {'type': 'nearby_update'})
+        except Exception:
+            pass
         return JsonResponse({
             'success': True,
             'lat': character.lat,
