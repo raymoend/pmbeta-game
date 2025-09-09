@@ -3064,6 +3064,10 @@ let berriesInterval = null;
 
         function handleWebSocketMessage(data) {
             switch (data.type) {
+                case 'error': {
+                    try { if (data && data.message) showMessage(data.message, 'error'); } catch(_) {}
+                    break;
+                }
                 case 'character_update': {
                     try {
                         const snap = data.data || data.character || {};
@@ -3904,9 +3908,14 @@ let berriesInterval = null;
                 if (!text) return;
                 if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
                     gameState.websocket.send(JSON.stringify({ type: 'chat_message', message: text, chat_type: channel }));
+                    // clear input only on send attempt
+                    input.value = '';
+                } else {
+                    showMessage('Chat disconnected. Reconnecting...', 'error');
                 }
-                input.value = '';
-            } catch(_) {}
+            } catch(e) {
+                try { showMessage('Chat failed: ' + (e && e.message ? e.message : 'error'), 'error'); } catch(_) {}
+            }
         }
 
         // Combat log helpers
