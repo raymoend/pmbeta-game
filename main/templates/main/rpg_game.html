@@ -242,13 +242,20 @@
         
         /* Side Panel */
         .side-panel {
-            width: 300px;
+            width: 260px;
             background: rgba(44, 62, 80, 0.95);
             backdrop-filter: blur(10px);
             border-left: 1px solid rgba(255,255,255,0.1);
             display: flex;
             flex-direction: column;
             z-index: 500;
+            transition: width 0.25s ease;
+        }
+        .side-panel.collapsed {
+            width: 0;
+            border-left: none;
+            overflow: hidden;
+            padding: 0;
         }
         
         .panel-tabs {
@@ -546,7 +553,7 @@
             background: rgba(17, 24, 39, 0.9);
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 10px;
-            z-index: 1800;
+            z-index: 12000;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -844,10 +851,23 @@
         .btn-inventory { background: #4b5563; color: #fff; }
         
         /* Responsive */
+        /* Desktop toggle button */
+        .mobile-menu-toggle {
+            position: absolute;
+            top: 70px;
+            right: 10px;
+            background: #3498db;
+            color: #fff;
+            border: none;
+            padding: 8px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            z-index: 12000;
+        }
         @media (max-width: 768px) {
             .side-panel {
                 position: absolute;
-                right: -300px;
+                right: -260px;
                 top: 0;
                 height: 100%;
                 transition: right 0.3s ease;
@@ -859,15 +879,9 @@
             }
             
             .mobile-menu-toggle {
-                position: absolute;
                 top: 10px;
                 right: 10px;
-                background: #3498db;
-                color: #fff;
-                border: none;
                 padding: 10px;
-                border-radius: 5px;
-                cursor: pointer;
                 z-index: 1100;
             }
             
@@ -966,8 +980,8 @@
             <!-- Mapbox Map -->
             <div id="map"></div>
             
-            <!-- Mobile Menu Toggle -->
-            <button class="mobile-menu-toggle" onclick="toggleSidePanel()" style="display: none;">☰</button>
+            <!-- Panel Toggle (desktop/mobile) -->
+            <button class="mobile-menu-toggle" onclick="toggleSidePanel()">☰</button>
             
             <!-- Side Panel -->
             <div class="side-panel" id="sidePanel">
@@ -2812,7 +2826,7 @@ let berriesInterval = null;
                 const sells = Array.isArray(data.sells) ? data.sells : [];
                 const modal = document.createElement('div');
                 modal.id = 'blackMarketModal';
-                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;';
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9000;';
                 modal.innerHTML = `
                   <div style="background:#0b1220;border:1px solid #1f2937;border-radius:10px;min-width:320px;max-width:520px;padding:14px;color:#e5e7eb;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
