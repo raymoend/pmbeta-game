@@ -2379,7 +2379,10 @@ if (dissolvedFeature) {
         function getBerriesCount() {
             try {
                 const inv = Array.isArray(gameState.inventoryItems) ? gameState.inventoryItems : [];
-                const entry = inv.find(e => (e && e.item && String(e.item.name || '').toLowerCase() === 'berries'));
+                const entry = inv.find(e => {
+                    const n = (e && e.item && String(e.item.name || '').toLowerCase()) || '';
+                    return n === 'berries' || n === 'energy berries';
+                });
                 const qty = entry ? (typeof entry.quantity === 'number' ? entry.quantity : 0) : 0;
                 return qty;
             } catch (_) { return 0; }
