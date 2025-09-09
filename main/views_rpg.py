@@ -1512,6 +1512,125 @@ def api_inventory_sell(request):
         return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
 
 
+@login_required
+@require_http_methods(["GET"])
+def api_black_market_catalog(request):
+    """Return Black Market buy/sell catalog with dynamic prices."""
+    try:
+        from .models import ItemTemplate
+        # Vendor buys from player (at favorable rate)
+        buys = ['Smuggled Goods', 'Gold Chains']
+        # Vendor sells to player (materials for contraband crafting)
+        sells = ['Smuggled Goods', 'Bullet Casings', 'Energy Cells']
+        cat_buy = []
+        cat_sell = []
+        for nm in buys:
+            try:
+                tpl = ItemTemplate.objects.get(name__iexact=nm)
+                price = int(max(1, round(getattr(tpl, 'base_value', 1) * 1.25)))
+                cat_buy.append({'name': tpl.name, 'price_per_unit': price})
+            except ItemTemplate.DoesNotExist:
+                cat_buy.append({'name': nm, 'price_per_unit': 10})
+        for nm in sells:
+            try:
+                tpl = ItemTemplate.objects.get(name__iexact=nm)
+                price = int(max(1, round(getattr(tpl, 'base_value', 1) * 1.8)))
+                cat_sell.append({'name': tpl.name, 'price_per_unit': price})
+            except ItemTemplate.DoesNotExist:
+                cat_sell.append({'name': nm, 'price_per_unit': 20})
+        return JsonResponse({'success': True, 'vendor': 'black_market', 'buys': cat_buy, 'sells': cat_sell})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_black_market_sell(request):
+    """Sell items to Black Market at favorable price.
+    Body: { name: string, quantity: int }
+    Allowed: Smuggled Goods, Gold Chains
+    """
+    try:
+        from .models import ItemTemplate, InventoryItem
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        name = (data.get('name') or '').strip()
+        qty = int(data.get('quantity') or 0)
+        if not name or qty <= 0:
+            return JsonResponse({'success': False, 'error': 'Invalid name or quantity'}, status=400)
+        if name.lower() not in ('smuggled goods', 'gold chains'):
+            return JsonResponse({'success': False, 'error': 'item_not_accepted'}, status=400)
+        try:
+            tpl = ItemTemplate.objects.get(name__iexact=name)
+            inv = InventoryItem.objects.get(character=character, item_template=tpl)
+        except ItemTemplate.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'item_not_found'}, status=404)
+        except InventoryItem.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'item_not_in_inventory'}, status=404)
+        sell_qty = min(inv.quantity, qty)
+        unit_price = int(max(1, round(getattr(tpl, 'base_value', 1) * 1.25)))
+        gold_gain = unit_price * sell_qty
+        inv.quantity -= sell_qty
+        if inv.quantity <= 0:
+            inv.delete()
+        else:
+            inv.save(update_fields=['quantity'])
+        character.gold += gold_gain
+        character.save(update_fields=['gold'])
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'sold': sell_qty, 'gold_gained': gold_gain, 'gold': character.gold})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_black_market_buy(request):
+    """Buy items from Black Market.
+    Body: { name: string, quantity: int }
+    Allowed: Smuggled Goods, Bullet Casings, Energy Cells
+    """
+    try:
+        from .models import ItemTemplate
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        name = (data.get('name') or '').strip()
+        qty = int(data.get('quantity') or 0)
+        if not name or qty <= 0:
+            return JsonResponse({'success': False, 'error': 'Invalid name or quantity'}, status=400)
+        if name.lower() not in ('smuggled goods', 'bullet casings', 'energy cells'):
+            return JsonResponse({'success': False, 'error': 'item_not_available'}, status=400)
+        try:
+            tpl = ItemTemplate.objects.get(name__iexact=name)
+            unit_price = int(max(1, round(getattr(tpl, 'base_value', 1) * 1.8)))
+        except ItemTemplate.DoesNotExist:
+            unit_price = 20
+        total = unit_price * qty
+        if character.gold < total:
+            return JsonResponse({'success': False, 'error': 'not_enough_gold'}, status=400)
+        character.gold -= total
+        character.add_item_to_inventory(name, qty)
+        character.save(update_fields=['gold'])
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'inventory_update'})
+            async_to_sync(channel_layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+        except Exception:
+            pass
+        return JsonResponse({'success': True, 'purchased': qty, 'gold_spent': total, 'gold': character.gold})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'internal_error', 'message': str(e)}, status=500)
+
+
 # ===============================
 # INVENTORY EQUIP/UNEQUIP
 # ===============================
@@ -2267,7 +2386,14 @@ def create_monster_templates():
             'base_experience': 30,
             'base_gold': 15,
             'is_aggressive': True,
-            'respawn_time_minutes': 30
+            'respawn_time_minutes': 30,
+            'drop_pool': [
+                # Common
+                {'item': 'Wolf Furs', 'quantity': 1, 'prob': 0.8},
+                {'item': 'Teeth', 'quantity': 1, 'prob': 0.7},
+                # Rare
+                {'item': 'Alpha Scent Gland', 'quantity': 1, 'prob': 0.12}
+            ]
         },
         {
             'name': 'Goblin Scout',
@@ -2280,7 +2406,14 @@ def create_monster_templates():
             'base_experience': 40,
             'base_gold': 25,
             'is_aggressive': True,
-            'respawn_time_minutes': 45
+            'respawn_time_minutes': 45,
+            'drop_pool': [
+                # Common
+                {'item': 'Goblin Tools', 'quantity': 1, 'prob': 0.7},
+                {'item': 'Mushrooms', 'quantity': 1, 'prob': 0.6},
+                # Rare
+                {'item': 'Scout Map Fragment', 'quantity': 1, 'prob': 0.1}
+            ]
         },
         {
             'name': 'Cave Bear',
@@ -2293,7 +2426,14 @@ def create_monster_templates():
             'base_experience': 100,
             'base_gold': 60,
             'is_aggressive': True,
-            'respawn_time_minutes': 60
+            'respawn_time_minutes': 60,
+            'drop_pool': [
+                # Common
+                {'item': 'Bear Pelts', 'quantity': 1, 'prob': 0.75},
+                {'item': 'Claws', 'quantity': 1, 'prob': 0.65},
+                # Rare
+                {'item': 'Ancient Bone Relic', 'quantity': 1, 'prob': 0.12}
+            ]
         },
         {
             'name': 'Rabbit',
@@ -2306,7 +2446,14 @@ def create_monster_templates():
             'base_experience': 10,
             'base_gold': 5,
             'is_aggressive': False,
-            'respawn_time_minutes': 15
+            'respawn_time_minutes': 15,
+            'drop_pool': [
+                # Common
+                {'item': 'Rabbit Meat', 'quantity': 1, 'prob': 0.8},
+                {'item': 'Hides', 'quantity': 1, 'prob': 0.7},
+                # Rare
+                {'item': 'Lucky Foot Charm', 'quantity': 1, 'prob': 0.08}
+            ]
         },
         # Themed mafia–alien set
         {
@@ -2322,9 +2469,11 @@ def create_monster_templates():
             'is_aggressive': True,
             'respawn_time_minutes': 35,
             'drop_pool': [
-                {'item': 'Energy Berries', 'quantity': 1, 'prob': 0.5},
-                {'item': 'Neon Wood', 'quantity': 1, 'prob': 0.3},
-                {'item': 'Quantum Ore', 'quantity': 1, 'prob': 0.15}
+                # Common
+                {'item': 'Gold Chains', 'quantity': 1, 'prob': 0.75},
+                {'item': 'Protection Rackets', 'quantity': 1, 'prob': 0.6},
+                # Rare
+                {'item': 'Mob Contract', 'quantity': 1, 'prob': 0.12}
             ]
         },
         {
@@ -2340,8 +2489,11 @@ def create_monster_templates():
             'is_aggressive': True,
             'respawn_time_minutes': 40,
             'drop_pool': [
-                {'item': 'Mutant Herbs', 'quantity': 1, 'prob': 0.4},
-                {'item': 'Plasma Stone', 'quantity': 1, 'prob': 0.25}
+                # Common
+                {'item': 'Steel Blades', 'quantity': 1, 'prob': 0.75},
+                {'item': 'Honor Tokens', 'quantity': 1, 'prob': 0.6},
+                # Rare
+                {'item': 'Katana Blueprint', 'quantity': 1, 'prob': 0.1}
             ]
         },
         {
@@ -2357,8 +2509,11 @@ def create_monster_templates():
             'is_aggressive': True,
             'respawn_time_minutes': 45,
             'drop_pool': [
-                {'item': 'Plasma Stone', 'quantity': 1, 'prob': 0.35},
-                {'item': 'Stellar Gems', 'quantity': 1, 'prob': 0.15}
+                # Common
+                {'item': 'Bullet Casings', 'quantity': 1, 'prob': 0.75},
+                {'item': 'Smuggled Goods', 'quantity': 1, 'prob': 0.5},
+                # Rare
+                {'item': 'Drug Cache', 'quantity': 1, 'prob': 0.15}
             ]
         },
         {
@@ -2374,8 +2529,11 @@ def create_monster_templates():
             'is_aggressive': True,
             'respawn_time_minutes': 50,
             'drop_pool': [
-                {'item': 'Void Essence', 'quantity': 1, 'prob': 0.25},
-                {'item': 'Stellar Gems', 'quantity': 1, 'prob': 0.2}
+                # Common
+                {'item': 'Eldritch Runes', 'quantity': 1, 'prob': 0.65},
+                {'item': 'Dark Essence', 'quantity': 1, 'prob': 0.55},
+                # Rare
+                {'item': 'Void Artifact', 'quantity': 1, 'prob': 0.12}
             ]
         },
         {
@@ -2391,8 +2549,11 @@ def create_monster_templates():
             'is_aggressive': True,
             'respawn_time_minutes': 25,
             'drop_pool': [
-                {'item': 'Nano-Fabric', 'quantity': 1, 'prob': 0.1},
-                {'item': 'Plasma Stone', 'quantity': 1, 'prob': 0.35}
+                # Common
+                {'item': 'Circuit Boards', 'quantity': 1, 'prob': 0.7},
+                {'item': 'Energy Cells', 'quantity': 1, 'prob': 0.6},
+                # Rare
+                {'item': 'AI Core', 'quantity': 1, 'prob': 0.12}
             ]
         },
         {
@@ -2407,9 +2568,12 @@ def create_monster_templates():
             'base_gold': 90,
             'is_aggressive': True,
             'respawn_time_minutes': 55,
-            'drop_pool': [
-                {'item': 'Ancient Alien Relic', 'quantity': 1, 'prob': 0.08},
-                {'item': 'Void Essence', 'quantity': 1, 'prob': 0.2}
+'drop_pool': [
+                # Common
+                {'item': 'Xenotech Scraps', 'quantity': 1, 'prob': 0.7},
+                {'item': 'Bio-Samples', 'quantity': 1, 'prob': 0.5},
+                # Rare
+                {'item': 'Plasma Emitter', 'quantity': 1, 'prob': 0.1}
             ]
         }
     ]

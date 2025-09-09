@@ -1424,6 +1424,9 @@
                 // Add zoom controls (compass hidden)
                 try { gameState.map.addControl(new mapboxgl.NavigationControl({ showCompass: false })); } catch(e) {}
                 
+                // Add Black Market floating button
+                try { addBlackMarketButton(); } catch(e) {}
+                
                 // Initialize WebSocket
                 initializeWebSocket();
                 
@@ -2655,15 +2658,155 @@ let berriesInterval = null;
         }
 
         function getItemIcon(item) {
-            const name = (item?.item?.name || '').toLowerCase();
+            const raw = (item?.item?.name || '').trim();
+            const name = raw.toLowerCase();
             const type = (item?.item?.item_type || '').toLowerCase();
-            // Simple emoji mapping; can be swapped for images later
+            const ITEM_SVG = {
+                'steel blades': '/static/img/items/steel_blades.svg',
+                'honor tokens': '/static/img/items/honor_tokens.svg',
+                'katana blueprint': '/static/img/items/katana_blueprint.svg',
+                'bullet casings': '/static/img/items/bullet_casings.svg',
+                'smuggled goods': '/static/img/items/smuggled_goods.svg',
+                'drug cache': '/static/img/items/drug_cache.svg',
+                'eldritch runes': '/static/img/items/eldritch_runes.svg',
+                'dark essence': '/static/img/items/dark_essence.svg',
+                'void artifact': '/static/img/items/void_artifact.svg',
+                'circuit boards': '/static/img/items/circuit_boards.svg',
+                'energy cells': '/static/img/items/energy_cells.svg',
+                'ai core': '/static/img/items/ai_core.svg',
+                'bear pelts': '/static/img/items/bear_pelts.svg',
+                'claws': '/static/img/items/claws.svg',
+                'ancient bone relic': '/static/img/items/ancient_bone_relic.svg',
+                'xenotech scraps': '/static/img/items/xenotech_scraps.svg',
+                'bio-samples': '/static/img/items/bio_samples.svg',
+                'plasma emitter': '/static/img/items/plasma_emitter.svg',
+                'gold chains': '/static/img/items/gold_chains.svg',
+                'protection rackets': '/static/img/items/protection_rackets.svg',
+                'mob contract': '/static/img/items/mob_contract.svg',
+                'wolf furs': '/static/img/items/wolf_furs.svg',
+                'teeth': '/static/img/items/teeth.svg',
+                'alpha scent gland': '/static/img/items/alpha_scent_gland.svg',
+                'rabbit meat': '/static/img/items/rabbit_meat.svg',
+                'hides': '/static/img/items/hides.svg',
+                'lucky foot charm': '/static/img/items/lucky_foot_charm.svg',
+                'goblin tools': '/static/img/items/goblin_tools.svg',
+                'mushrooms': '/static/img/items/mushrooms.svg',
+                'scout map fragment': '/static/img/items/scout_map_fragment.svg',
+            };
+            if (ITEM_SVG[name]) {
+                const url = ITEM_SVG[name];
+                return `<img src=\"${url}\" alt=\"${raw.replace(/</g,'&lt;')}\" width=\"20\" height=\"20\" style=\"display:block;\"/>`;
+            }
+            // Fallback emoji mapping
             if (/berry|berries/.test(name)) return '🍓';
             if (type === 'weapon' || /sword|dagger|axe|bow/.test(name)) return '🗡️';
             if (type === 'armor' || /armor|mail|vest|helmet|shield/.test(name)) return '🛡️';
-            if (type === 'consumable' || /potion|food|meat|bread/.test(name)) return '🧪';
-            if (/ore|artifact|gold|iron|stone|rock/.test(name)) return '🪨';
+            if (type === 'consumable' || /potion|food|meat|bread|tonic|rations|drug/.test(name)) return '🧪';
+            if (/ore|artifact|gold|iron|stone|rock|gem|chain/.test(name)) return '🪨';
             return '🎒';
+        }
+
+        function addBlackMarketButton() {
+            const id = 'blackMarketBtn';
+            if (document.getElementById(id)) return;
+            const btn = document.createElement('button');
+            btn.id = id;
+            btn.textContent = '🕶 Black Market';
+            btn.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:9999;padding:8px 10px;background:#111827;color:#fff;border:1px solid #374151;border-radius:8px;cursor:pointer;opacity:0.9;';
+            btn.addEventListener('click', showBlackMarket);
+            document.body.appendChild(btn);
+        }
+
+        async function showBlackMarket() {
+            try {
+                const res = await fetch('/api/rpg/vendor/black-market/catalog/', { credentials: 'same-origin' });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) { showMessage('Vendor unavailable', 'error'); return; }
+                const buys = Array.isArray(data.buys) ? data.buys : [];
+                const sells = Array.isArray(data.sells) ? data.sells : [];
+                const modal = document.createElement('div');
+                modal.id = 'blackMarketModal';
+                modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;';
+                modal.innerHTML = `
+                  <div style="background:#0b1220;border:1px solid #1f2937;border-radius:10px;min-width:320px;max-width:520px;padding:14px;color:#e5e7eb;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                      <strong>Black Market</strong>
+                      <button id="bmClose" style="background:#374151;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Close</button>
+                    </div>
+                    <div style="display:flex;gap:12px;margin-top:10px;">
+                      <div style="flex:1;">
+                        <div style="font-weight:600;margin-bottom:6px;">We Buy</div>
+                        <div id="bmBuyList"></div>
+                      </div>
+                      <div style="flex:1;">
+                        <div style="font-weight:600;margin-bottom:6px;">We Sell</div>
+                        <div id="bmSellList"></div>
+                      </div>
+                    </div>
+                  </div>`;
+                document.body.appendChild(modal);
+                modal.querySelector('#bmClose').addEventListener('click', ()=>{ try { modal.remove(); } catch(_) {} });
+                const buyList = modal.querySelector('#bmBuyList');
+                const sellList = modal.querySelector('#bmSellList');
+                buyList.innerHTML = buys.map(b => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0;gap:8px;">
+                    <span>${(b.name||'').toString().replace(/</g,'&lt;')}</span>
+                    <div>
+                      <input type="number" value="1" min="1" style="width:60px;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:2px 6px;"/>
+                      <button class="bm-sell" data-name="${b.name}" data-price="${b.price_per_unit}" style="margin-left:6px;background:#10b981;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Sell @ ${b.price_per_unit}g</button>
+                    </div>
+                  </div>`).join('');
+                sellList.innerHTML = sells.map(s => `
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0;gap:8px;">
+                    <span>${(s.name||'').toString().replace(/</g,'&lt;')}</span>
+                    <div>
+                      <input type="number" value="1" min="1" style="width:60px;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:2px 6px;"/>
+                      <button class="bm-buy" data-name="${s.name}" data-price="${s.price_per_unit}" style="margin-left:6px;background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;">Buy @ ${s.price_per_unit}g</button>
+                    </div>
+                  </div>`).join('');
+                // Wire actions
+                modal.querySelectorAll('.bm-sell').forEach(btn => {
+                  btn.addEventListener('click', async (e) => {
+                    const wrap = e.target.closest('div');
+                    const qtyInput = wrap.querySelector('input');
+                    const qty = Math.max(1, parseInt(qtyInput.value||'1',10));
+                    await actBlackMarket('sell', btn.getAttribute('data-name'), qty);
+                  });
+                });
+                modal.querySelectorAll('.bm-buy').forEach(btn => {
+                  btn.addEventListener('click', async (e) => {
+                    const wrap = e.target.closest('div');
+                    const qtyInput = wrap.querySelector('input');
+                    const qty = Math.max(1, parseInt(qtyInput.value||'1',10));
+                    await actBlackMarket('buy', btn.getAttribute('data-name'), qty);
+                  });
+                });
+              } catch (e) {
+                showMessage('Black Market failed to load', 'error');
+              }
+        }
+
+        async function actBlackMarket(kind, name, qty) {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const url = kind === 'buy' ? '/api/rpg/vendor/black-market/buy/' : '/api/rpg/vendor/black-market/sell/';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ name, quantity: qty })
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) {
+                    showMessage((data && (data.error || data.message)) || 'Transaction failed', 'error');
+                    return;
+                }
+                try { loadInventory(); } catch(_) {}
+                try { updateCharacterStats(Object.assign({}, gameState.character, { gold: data.gold })); } catch(_) {}
+                showMessage(kind === 'buy' ? 'Purchased!' : 'Sold!', 'success');
+            } catch (e) {
+                showMessage('Transaction error', 'error');
+            }
         }
 
         function updateInventoryUI(inventory) {
@@ -2722,12 +2865,56 @@ let berriesInterval = null;
                             }
                         });
                     }
+                    // Attach use action for consumables
+                    if (type === 'consumable') {
+                        const btn = document.createElement('button');
+                        btn.className = 'use-consumable-btn';
+                        btn.textContent = 'Use';
+                        btn.style.cssText = 'position:absolute; bottom:2px; right:2px; padding:2px 6px; font-size:11px; border:none; border-radius:4px; background:#0ea5e9; color:#fff; cursor:pointer;';
+                        btn.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            try { await useConsumable(nm); } catch(_) {}
+                        });
+                        slot.style.position = 'relative';
+                        slot.appendChild(btn);
+                    }
                 }
                 
                 inventoryGrid.appendChild(slot);
             }
             // Update heal button state after inventory render
             try { updateHealButtonState(); } catch (_) {}
+        }
+
+        async function useConsumable(itemName) {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const res = await fetch('/api/inventory/use/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ item_name: itemName, quantity: 1 })
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false || data.error) {
+                    showMessage((data && (data.error || data.message)) || 'Use failed', 'error');
+                    return;
+                }
+                if (data.character_stats) {
+                    const s = data.character_stats;
+                    const ch = Object.assign({}, gameState.character, {
+                        current_hp: s.current_hp, max_hp: s.max_hp,
+                        current_mana: s.current_mana, max_mana: s.max_mana,
+                        current_stamina: s.current_stamina, max_stamina: s.max_stamina,
+                    });
+                    updateCharacterStats(ch);
+                }
+                showMessage('Used ' + itemName, 'success');
+                loadInventory();
+            } catch (e) {
+                console.warn('useConsumable failed', e);
+                showMessage('Use failed', 'error');
+            }
         }
 
         // WebSocket Connection

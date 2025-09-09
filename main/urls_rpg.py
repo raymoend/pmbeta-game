@@ -61,6 +61,11 @@ urlpatterns = [
     # Trading API endpoints
     path('api/rpg/trade/create/', views_rpg.api_trade_create, name='api_trade_create'),
 
+    # Black Market Vendor
+    path('api/rpg/vendor/black-market/catalog/', views_rpg.api_black_market_catalog, name='api_black_market_catalog'),
+    path('api/rpg/vendor/black-market/buy/', views_rpg.api_black_market_buy, name='api_black_market_buy'),
+    path('api/rpg/vendor/black-market/sell/', views_rpg.api_black_market_sell, name='api_black_market_sell'),
+
     # Notifications (GameEvent) API
     path('api/rpg/events/', views_rpg.api_events_list, name='api_events_list'),
     path('api/rpg/events/mark-read/', views_rpg.api_events_mark_read, name='api_events_mark_read'),

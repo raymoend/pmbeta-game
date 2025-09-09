@@ -530,6 +530,22 @@ class ItemTemplate(BaseModel):
         if self.heal_percentage > 0:
             total_heal += int(character.max_hp * self.heal_percentage)
         
+        # Special named effects (no schema change)
+        try:
+            nm = (self.name or '').strip().lower()
+        except Exception:
+            nm = ''
+        if nm == 'ammo pack':
+            try:
+                from django.core.cache import cache
+                import time as _t
+                # 20% damage boost for 15 seconds
+                cache.set(f'char:buff:dmg:{character.id}', {'mult': 1.2, 'expires_at': _t.time() + 15}, 20)
+            except Exception:
+                pass
+            character.save()
+            return True, 'Weapon damage boosted for 15s'
+        
         # Apply effects
         if total_heal > 0:
             old_hp = character.current_hp
@@ -747,6 +763,20 @@ class PvECombat(BaseModel):
             try:
                 if (self.character.class_type or '').lower() == 'void_sorcerer' and random.random() < 0.10:
                     total_damage = int(math.ceil(total_damage * 1.5))
+            except Exception:
+                pass
+            # Temporary damage buff (e.g., Ammo Pack)
+            try:
+                from django.core.cache import cache
+                import time as _t
+                key = f'char:buff:dmg:{self.character.id}'
+                buff = cache.get(key)
+                if buff and float(buff.get('expires_at', 0)) > _t.time():
+                    mult = float(buff.get('mult', 1.0))
+                    if mult and mult > 0:
+                        total_damage = int(math.ceil(total_damage * mult))
+                elif buff:
+                    cache.delete(key)
             except Exception:
                 pass
             total_damage = max(1, int(total_damage))
