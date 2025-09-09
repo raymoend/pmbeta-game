@@ -218,6 +218,11 @@ if _CELERY_AVAILABLE:
             'task': 'main.tasks.npc_pulse_task',
             'schedule': crontab(minute='*/2'),
         },
+        # Regenerate depleted resource nodes every minute
+        'resource-regen': {
+            'task': 'main.tasks.resource_regen_task',
+            'schedule': crontab(minute='*/1'),
+        },
     }
 else:
     CELERY_BEAT_SCHEDULE = {}
@@ -271,6 +276,18 @@ GAME_SETTINGS = {
     # Wild spawn settings outside flags (PK-style wandering mobs)
     'WILD_MIN_NPCS': int(os.environ.get('WILD_MIN_NPCS', '5')),
     'WILD_SPAWN_RADIUS_M': int(os.environ.get('WILD_SPAWN_RADIUS_M', '120')),
+
+    # GPS anti-cheat thresholds (PK/Mafia tuned)
+    # Max observed speed allowed before rejection (m/s). ~40 km/h = 11.11 m/s
+    'GPS_MAX_SPEED_M_S': float(os.environ.get('GPS_MAX_SPEED_M_S', '11.1')),
+    # Server rate-limit between accepted GPS updates (ms)
+    'GPS_MIN_INTERVAL_MS': int(os.environ.get('GPS_MIN_INTERVAL_MS', '1500')),
+    # Ignore updates with worse accuracy when movement is within that noise (meters)
+    'GPS_MAX_H_ACCURACY_M': float(os.environ.get('GPS_MAX_H_ACCURACY_M', '100')),
+    # Buffer multiplier over max speed before rejecting (e.g., 1.3 = 30% headroom)
+    'GPS_SPEED_TOLERANCE': float(os.environ.get('GPS_SPEED_TOLERANCE', '1.3')),
+    # Client-side minimum move distance to send update (meters)
+    'GPS_MIN_MOVE_M': float(os.environ.get('GPS_MIN_MOVE_M', '5')),
 }
 
 # Parallel Kingdom-style overrides used by services when present

@@ -2193,6 +2193,167 @@ def api_character_move(request):
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
+@login_required
+@require_http_methods(["POST"])
+def api_character_geo_update(request):
+    """GPS geolocation update from the browser.
+    Anti-cheat: rate limit updates and validate plausible speed between samples.
+    Body: { lat: float, lon: float, accuracy?: float, heading?: float, speed?: float, ts?: number }
+    Returns new authoritative position or a rejection if limits exceeded.
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        data = json.loads(request.body or '{}')
+        new_lat = float(data.get('lat'))
+        new_lon = float(data.get('lon'))
+        accuracy = float(data.get('accuracy', 30.0) or 30.0)  # meters
+        heading = data.get('heading', None)
+        client_speed = float(data.get('speed', 0.0) or 0.0)  # m/s, optional hint
+        # Settings
+        try:
+            gs = getattr(settings, 'GAME_SETTINGS', {}) or {}
+        except Exception:
+            gs = {}
+        max_speed = float(gs.get('GPS_MAX_SPEED_M_S', 11.1))   # ~40 km/h
+        min_interval_ms = int(gs.get('GPS_MIN_INTERVAL_MS', 1500))
+        max_accuracy_m = float(gs.get('GPS_MAX_H_ACCURACY_M', 100.0))
+        tolerance = float(gs.get('GPS_SPEED_TOLERANCE', 1.3))
+        # Simple rate limit per character
+        rl_key = f'geo:rl:{character.id}'
+        if cache.get(rl_key):
+            return JsonResponse({'success': False, 'error': 'rate_limited'}, status=429)
+        cache.set(rl_key, True, timeout=max(1, int(min_interval_ms/1000.0)))
+        # Previous sample (fallback to current character position if none)
+        state_key = f'geo:last:{character.id}'
+        state = cache.get(state_key) or {}
+        last_lat = float(state.get('lat', character.lat))
+        last_lon = float(state.get('lon', character.lon))
+        last_at = state.get('at', None)
+        now = timezone.now()
+        dt_s = 1.0
+        if last_at is not None:
+            try:
+                dt_s = max(0.001, (now - last_at).total_seconds())
+            except Exception:
+                dt_s = 1.0
+        # Compute distance and speed
+        dist_m = Character.distance_between(last_lat, last_lon, new_lat, new_lon)
+        speed = dist_m / dt_s if dt_s > 0 else float('inf')
+        # Accuracy gating: if accuracy is very poor and jump is small, ignore update (reduce jitter)
+        if accuracy > max_accuracy_m and dist_m < (accuracy * 0.75):
+            return JsonResponse({'success': False, 'error': 'poor_accuracy'}, status=202)
+        # Hard speed check (allow some buffer over max_speed, and lenient if client reports low accuracy)
+        if speed > (max_speed * max(1.0, tolerance)) and accuracy <= max_accuracy_m:
+            # Reject suspicious teleport
+            return JsonResponse({'success': False, 'error': 'speed_exceeded', 'observed_speed_m_s': round(speed, 2), 'max_m_s': max_speed}, status=422)
+        # Accept and move the character
+        old_lat, old_lon = character.lat, character.lon
+        character.lat = new_lat
+        character.lon = new_lon
+        character.save(update_fields=['lat', 'lon', 'updated_at'])
+        # Persist last state for next diff
+        cache.set(state_key, {'lat': new_lat, 'lon': new_lon, 'at': now}, timeout=3600)
+        # If moving during active PvE combat, apply leash-follow behavior (same rules as api_character_move)
+        combat_following = False
+        combat_ended_flag = False
+        fled = False
+        leash_remaining_m = None
+        try:
+            if character.in_combat:
+                combat = PvECombat.objects.filter(character=character, status='active').select_related('monster__template').first()
+                if combat and combat.monster and combat.monster.is_alive:
+                    from .services.movement import haversine_m
+                    from .services.territory import point_in_flag, flag_radius_for_flag
+                    anchor_key = f"combat_anchor:{combat.id}"
+                    anchor = cache.get(anchor_key)
+                    if not anchor:
+                        anchor_lat = float(getattr(combat.monster, 'lat', character.lat))
+                        anchor_lon = float(getattr(combat.monster, 'lon', character.lon))
+                        try:
+                            gs2 = getattr(settings, 'GAME_SETTINGS', {})
+                        except Exception:
+                            gs2 = {}
+                        default_r = int(gs2.get('FLAG_RADIUS_M') or gs2.get('FLAG_RADIUS') or 600)
+                        radius_m = default_r
+                        try:
+                            nearby_flags = TerritoryFlag.objects.filter(
+                                lat__gte=anchor_lat - 0.05,
+                                lat__lte=anchor_lat + 0.05,
+                                lon__gte=anchor_lon - 0.05,
+                                lon__lte=anchor_lon + 0.05,
+                                status=getattr(TerritoryFlag.Status, 'ACTIVE', 'active'),
+                            )
+                            for f in nearby_flags:
+                                try:
+                                    if point_in_flag(anchor_lat, anchor_lon, f):
+                                        radius_m = int(flag_radius_for_flag(f))
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+                        anchor = {'lat': anchor_lat, 'lon': anchor_lon, 'radius_m': int(radius_m)}
+                        cache.set(anchor_key, anchor, 3600)
+                    dist_from_anchor = float(haversine_m(new_lat, new_lon, anchor['lat'], anchor['lon']))
+                    leash_remaining_m = max(0, int(anchor['radius_m'] - dist_from_anchor))
+                    if dist_from_anchor > float(anchor['radius_m']):
+                        with transaction.atomic():
+                            combat.status = 'fled'
+                            combat.ended_at = timezone.now()
+                            combat.save(update_fields=['status', 'ended_at'])
+                            character.in_combat = False
+                            character.save(update_fields=['in_combat'])
+                            try:
+                                m = combat.monster
+                                m.in_combat = False
+                                m.current_target = None
+                                m.lat = anchor['lat']
+                                m.lon = anchor['lon']
+                                m.save(update_fields=['in_combat', 'current_target', 'lat', 'lon'])
+                            except Exception:
+                                pass
+                        combat_ended_flag = True
+                        fled = True
+                        combat_following = False
+                        try:
+                            cache.delete(anchor_key)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            m = combat.monster
+                            m.lat = new_lat
+                            m.lon = new_lon
+                            m.save(update_fields=['lat', 'lon'])
+                            combat_following = True
+                        except Exception:
+                            combat_following = False
+        except Exception:
+            pass
+        # Push character + nearby updates via WebSocket
+        try:
+            layer = get_channel_layer()
+            async_to_sync(layer.group_send)(f'character_{character.id}', {'type': 'character_update'})
+            async_to_sync(layer.group_send)(f'character_{character.id}', {'type': 'nearby_update'})
+        except Exception:
+            pass
+        return JsonResponse({
+            'success': True,
+            'location': {'lat': character.lat, 'lon': character.lon},
+            'distance_from_last_m': round(dist_m, 2),
+            'observed_speed_m_s': round(speed, 2),
+            'combat_ended': combat_ended_flag,
+            'fled': fled,
+            'leash_remaining_m': leash_remaining_m
+        })
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Character not found'}, status=404)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        return JsonResponse({'success': False, 'error': 'invalid_request'}, status=400)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'server_error', 'message': str(e)}, status=500)
+
+
 # ===============================
 # TERRITORY NPC LISTING (persistent NPCs in flags)
 # ===============================

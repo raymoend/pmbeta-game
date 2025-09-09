@@ -58,7 +58,13 @@
         FLAG_CAPTURE_WINDOW_S: {{ game_settings.FLAG_CAPTURE_WINDOW_S|default:180 }},
         CLAIM_CAPTURE_WINDOW_S: {{ game_settings.CLAIM_CAPTURE_WINDOW_S|default:180 }},
         FLAG_PROTECTION_S: {{ game_settings.FLAG_PROTECTION_S|default:360 }},
-        CLAIM_PROTECTION_S: {{ game_settings.CLAIM_PROTECTION_S|default:360 }}
+        CLAIM_PROTECTION_S: {{ game_settings.CLAIM_PROTECTION_S|default:360 }},
+        // GPS thresholds (PK/Mafia tuned)
+        GPS_MAX_SPEED_M_S: {{ game_settings.GPS_MAX_SPEED_M_S|default:11.1 }},
+        GPS_MIN_INTERVAL_MS: {{ game_settings.GPS_MIN_INTERVAL_MS|default:1500 }},
+        GPS_MAX_H_ACCURACY_M: {{ game_settings.GPS_MAX_H_ACCURACY_M|default:100 }},
+        GPS_SPEED_TOLERANCE: {{ game_settings.GPS_SPEED_TOLERANCE|default:1.3 }},
+        GPS_MIN_MOVE_M: {{ game_settings.GPS_MIN_MOVE_M|default:5 }}
       };
     </script>
     
@@ -1061,6 +1067,12 @@
                         <h3>Resources</h3>
                         <div id="resourcesList" style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 340px; overflow-y: auto;"></div>
                     </div>
+
+                    <!-- Buildings Tab -->
+                    <div id="buildings-tab" class="tab-panel">
+                        <h3>Buildings</h3>
+                        <div id="buildingsList" style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 340px; overflow-y: auto;"></div>
+                    </div>
                     
                     <!-- Crafting Tab -->
                     <div id="crafting-tab" class="tab-panel">
@@ -1129,7 +1141,7 @@
         <div class="chat-body" id="chatMessages"></div>
         <div class="chat-input">
             <select id="chatChannelSelect" title="Channel">
-                <option value="location">Local</option>
+                <option value="local">Local</option>
                 <option value="global">Global</option>
             </select>
             <input type="text" id="chatInput" placeholder="Type a message and press Enter" maxlength="200" />
@@ -1983,7 +1995,28 @@
             return `${s}s`;
         }
 
-        function updateResourceMarkers(resources) {
+        function renderBuildingsList(buildings) {
+            const cont = document.getElementById('buildingsList');
+            if (!cont) return;
+            cont.innerHTML = '';
+            const arr = Array.isArray(buildings) ? buildings.slice() : [];
+            if (!arr.length) { cont.innerHTML = '<p style="color:#95a5a6; text-align:center;">No buildings nearby</p>'; return; }
+            arr.sort((a,b) => (a.distance_meters||1e9) - (b.distance_meters||1e9));
+            arr.forEach(b => {
+                const dist = Math.round(b.distance_meters || 0);
+                const own = !!b.is_own;
+                const dmg = Math.max(0, (b.hp?.max || 0) - (b.hp?.current || 0));
+                const status = (b.status || 'active');
+                const el = document.createElement('div');
+                el.style.cssText = 'background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;';
+                el.innerHTML = `
+                    <div style="display:flex; flex-direction:column;">
+                      <div style="font-weight:600; color:#ecf0f1;">${(b.name || b.type || 'Building')}</div>
+                      <div style="font-size: 0.8rem; color:#95a5a6;">Lvl ${b.level || 1} · ${dist}m · HP ${(b.hp?.current||0)}/${(b.hp?.max||0)} · ${status}</div>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                      ${own ? `<button class="btn" style="background:#2ecc71;color:white;" onclick="collectBuildingRevenue('${b.id}')">Collect</button>` : ''}
+                      ${own ? `<button class="btn" style="background:#6b7280;color:white;" onclick="repairBuilding('${b.id}')" ${dmg>0?'':'disabled'}>Repair</button>` : `<button class="btn" style="background:#e74c3c;color:white;" onclick="attackBuilding('${b.id}')
             if (!gameState.map) return;
             if (!gameState.resourceMarkers) gameState.resourceMarkers = {};
             const ids = new Set((resources || []).map(r => String(r.id)));
@@ -2083,6 +2116,45 @@
                 console.warn('harvestResource error', e);
                 showMessage('Harvest failed', 'error');
             }
+        }
+
+        async function fetchNearbyBuildings() {
+            const url = '/api/nearby-buildings/?radius=1'; // 1 km
+            try {
+                const res = await fetch(url, { credentials: 'same-origin' });
+                const data = await res.json();
+                if (!res.ok || data.success === false) return;
+                const buildings = Array.isArray(data.buildings) ? data.buildings : [];
+                renderBuildingsList(buildings);
+            } catch (_) {}
+        }
+
+        function attackBuilding(id) {
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            fetch(`/api/buildings/attack/${id}/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                credentials: 'same-origin',
+                body: JSON.stringify({})
+            }).then(r => r.json()).then(d => {
+                if (!d || d.success === false) { showMessage((d && (d.error || d.message)) || 'Attack failed', 'error'); return; }
+                showMessage(`Dealt ${d.damage} damage${d.gold_stolen?`, stole ${d.gold_stolen}g`:''}`, 'success');
+                fetchNearbyBuildings();
+            }).catch(() => {});
+        }
+
+        function collectBuildingRevenue(id) {
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            fetch(`/api/collect-revenue/${id}/`, { method: 'POST', headers: { 'X-CSRFToken': csrf }, credentials: 'same-origin' })
+              .then(r => r.json()).then(d => { if (!d || d.success === false) { showMessage((d && d.error) || 'Collect failed', 'error'); return; } showMessage(d.message || 'Collected', 'success'); fetchNearbyBuildings(); })
+              .catch(()=>{});
+        }
+
+        function repairBuilding(id) {
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            fetch(`/api/buildings/repair/${id}/`, { method: 'POST', headers: { 'X-CSRFToken': csrf }, credentials: 'same-origin' })
+              .then(r => r.json()).then(d => { if (!d || d.success === false) { showMessage((d && (d.error || d.message)) || 'Repair failed', 'error'); return; } showMessage(`Repaired (cost ${d.cost}g)`, 'success'); fetchNearbyBuildings(); })
+              .catch(()=>{});
         }
 
         function renderResourcesList(resources) {
@@ -3006,6 +3078,7 @@ let berriesInterval = null;
                         updateResourceMarkers(resources);
                         renderResourcesList(resources);
                     } catch(_) {}
+                    try { fetchNearbyBuildings(); } catch(_) {}
                     break;
                 }
                 case 'player_update':
@@ -3032,7 +3105,7 @@ let berriesInterval = null;
                     break;
                 case 'chat_message':
                     try {
-                        const p = data.data || data.payload || {};
+                        const p = data.data || data.payload || data || {};
                         addChatMessage(p);
                     } catch(_) {}
                     break;
@@ -3047,6 +3120,12 @@ let berriesInterval = null;
                         const panel = document.getElementById('inboxPanel');
                         if (panel && panel.style.display === 'block') { refreshInbox(); }
                     } catch(_) {}
+                    break;
+                case 'flag_event':
+                    try { fetchNearbyFlags(); } catch(_) {}
+                    break;
+                case 'building_event':
+                    try { fetchNearbyBuildings(); } catch(_) {}
                     break;
                 case 'combat_start':
                     try {
@@ -3698,7 +3777,7 @@ let berriesInterval = null;
                 const body = document.getElementById('chatMessages');
                 if (!body) return;
                 const who = (p.character_name || 'Unknown').toString().replace(/</g,'&lt;');
-                const ch = (p.channel || 'global');
+                const ch = (p.channel || p.chat_type || 'global');
                 const msg = (p.message || '').toString().replace(/</g,'&lt;');
                 const t = (p.timestamp || '').toString();
                 const row = document.createElement('div');
@@ -3867,8 +3946,116 @@ let berriesInterval = null;
                 try { fetchNearbyPlayers(); } catch(_) {}
                 try { fetchNearbyMonsters(); } catch(_) {}
                 try { fetchNearbyResources(); } catch(_) {}
+                try { fetchNearbyBuildings(); } catch(_) {}
             }, ms);
         }
+
+        // ===============================
+        // Geolocation (Phase 3)
+        // ===============================
+        let GEO_WATCH_ID = null;
+        let GEO_LAST_SENT_AT = 0;
+        let GEO_LAST_LAT = null;
+        let GEO_LAST_LON = null;
+        const GEO_MIN_INTERVAL_MS = (window.GAME_CFG && Number(window.GAME_CFG.GPS_MIN_INTERVAL_MS)) || 1500;     // client throttle
+        const GEO_MIN_MOVE_M = (window.GAME_CFG && Number(window.GAME_CFG.GPS_MIN_MOVE_M)) || 5;             // only send if moved enough
+
+        function startGeolocation() {
+            try {
+                if (!('geolocation' in navigator)) {
+                    console.warn('Geolocation not available');
+                    return;
+                }
+                if (GEO_WATCH_ID !== null) return; // already running
+                GEO_WATCH_ID = navigator.geolocation.watchPosition(onGeoSuccess, onGeoError, {
+                    enableHighAccuracy: true,
+                    maximumAge: 2000,
+                    timeout: 10000,
+                });
+                showMessage('GPS enabled. Move around to update your position.', 'info');
+            } catch (e) {
+                console.warn('startGeolocation failed', e);
+            }
+        }
+        function stopGeolocation() {
+            try {
+                if (GEO_WATCH_ID !== null) {
+                    navigator.geolocation.clearWatch(GEO_WATCH_ID);
+                    GEO_WATCH_ID = null;
+                }
+                showMessage('GPS disabled.', 'info');
+            } catch (e) {
+                console.warn('stopGeolocation failed', e);
+            }
+        }
+        function onGeoSuccess(pos) {
+            try {
+                const coords = pos && pos.coords ? pos.coords : {};
+                const lat = Number(coords.latitude);
+                const lon = Number(coords.longitude);
+                const acc = Number(coords.accuracy || 0);
+                const spd = Number(coords.speed || 0);
+                const hdg = Number(coords.heading || 0);
+                const now = Date.now();
+                // Throttle on client
+                if (now - GEO_LAST_SENT_AT < GEO_MIN_INTERVAL_MS) return;
+                // Only send if moved enough
+                if (GEO_LAST_LAT != null && GEO_LAST_LON != null) {
+                    const moved = calculateDistance(GEO_LAST_LAT, GEO_LAST_LON, lat, lon);
+                    if (moved < GEO_MIN_MOVE_M && (now - GEO_LAST_SENT_AT) < (GEO_MIN_INTERVAL_MS * 2)) return;
+                }
+                GEO_LAST_SENT_AT = now;
+                GEO_LAST_LAT = lat;
+                GEO_LAST_LON = lon;
+                postGeoUpdate({ lat, lon, accuracy: acc, speed: spd, heading: hdg });
+            } catch (e) {
+                console.warn('onGeoSuccess error', e);
+            }
+        }
+        function onGeoError(err) {
+            console.warn('Geolocation error', err);
+        }
+        async function postGeoUpdate(payload) {
+            try {
+                const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+                const res = await fetch('/api/rpg/character/geo-update/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) {
+                    // Soft failures (202 poor_accuracy, 429 rate_limited, 422 speed_exceeded)
+                    if (res.status === 202) return; // ignore noisy accuracy cases
+                    if (data && data.error === 'rate_limited') return;
+                    if (data && data.error === 'speed_exceeded') {
+                        showMessage('Movement too fast; update rejected.', 'error');
+                        return;
+                    }
+                    console.warn('geo-update rejected', data);
+                    return;
+                }
+                // Update local character and map
+                try {
+                    const loc = data.location || {};
+                    gameState.character.lat = loc.lat;
+                    gameState.character.lon = loc.lon;
+                    if (playerMarker) playerMarker.setLngLat([loc.lon, loc.lat]);
+                    // Keep map loosely centered on player while GPS active
+                    try { if (gameState.map) gameState.map.setCenter([loc.lon, loc.lat]); } catch(_) {}
+                } catch(_) {}
+            } catch (e) {
+                console.warn('postGeoUpdate failed', e);
+            }
+        }
+
+        // Auto-enable geolocation when available; users can still click-to-move too
+        try {
+            document.addEventListener('DOMContentLoaded', () => {
+                try { if ('geolocation' in navigator) startGeolocation(); } catch(_) {}
+            });
+        } catch(_) {}
 
         function startResourceTicker() {
             if (gameState.resourceTicker) { try { clearInterval(gameState.resourceTicker); } catch(_) {} }

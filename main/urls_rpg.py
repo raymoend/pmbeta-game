@@ -81,6 +81,7 @@ urlpatterns = [
     
     # Character movement endpoint
     path('api/rpg/character/move/', views_rpg.api_character_move, name='api_character_move'),
+    path('api/rpg/character/geo-update/', views_rpg.api_character_geo_update, name='api_character_geo_update'),
 ]
 
 # Import building URLs

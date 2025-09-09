@@ -14,7 +14,7 @@ import json
 import uuid
 
 from .models import Character
-from .building_models import BuildingType, FlagColor, PlayerBuilding, BuildingTemplate
+from .building_models import BuildingType, FlagColor, PlayerBuilding, BuildingTemplate, BuildingAttack
 
 
 @login_required
@@ -63,6 +63,43 @@ def api_building_types(request):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@login_required
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_repair_building(request, building_id):
+    """Owner repairs a building to restore HP. Costs gold proportional to missing HP.
+    Requires owner and proximity (~30m).
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        try:
+            building = PlayerBuilding.objects.select_for_update().get(id=building_id, owner=character)
+        except PlayerBuilding.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'building_not_found_or_not_owner'}, status=404)
+        # Range check
+        dist = character.distance_to(building.lat, building.lon)
+        if dist > 30.0:
+            return JsonResponse({'success': False, 'error': 'too_far'}, status=400)
+        if building.current_hp >= building.max_hp and building.status == 'active':
+            return JsonResponse({'success': False, 'error': 'already_full'}, status=400)
+        missing = max(0, int(building.max_hp) - int(building.current_hp))
+        # Cost: 1 gold per missing HP, min 10
+        cost = max(10, missing)
+        if character.gold < cost:
+            return JsonResponse({'success': False, 'error': 'insufficient_gold', 'cost': cost, 'gold': character.gold}, status=400)
+        character.gold -= cost
+        character.save(update_fields=['gold'])
+        building.current_hp = building.max_hp
+        building.status = 'active'
+        building.save(update_fields=['current_hp', 'status', 'updated_at'])
+        _broadcast_building_event(building, 'repaired', extra={'cost': cost})
+        return JsonResponse({'success': True, 'cost': cost, 'gold': character.gold, 'hp': {'current': building.current_hp, 'max': building.max_hp}})
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'server_error', 'message': str(e)}, status=500)
 
 
 @login_required
@@ -339,6 +376,127 @@ def api_nearby_buildings(request):
 @login_required
 @csrf_exempt
 @require_http_methods(["POST"])
+def _broadcast_building_event(building, event: str, extra=None, radius_m: float = 800):
+    try:
+        from .utils.geo import tiles_within_radius
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        layer = get_channel_layer()
+        payload = {
+            'type': 'building_event',
+            'event': event,
+            'building': {
+                'id': str(building.id),
+                'name': building.custom_name or building.building_type.name,
+                'type': building.building_type.name,
+                'owner_id': building.owner.id if building.owner_id else None,
+                'lat': building.lat,
+                'lon': building.lon,
+                'level': building.level,
+                'status': building.status,
+                'hp': {'current': building.current_hp, 'max': building.max_hp},
+            },
+        }
+        if extra is not None:
+            payload['extra'] = extra
+        for g in tiles_within_radius(building.lat, building.lon, radius_m):
+            async_to_sync(layer.group_send)(g, {'type': 'building.event', 'payload': payload})
+    except Exception:
+        pass
+
+
+@login_required
+@require_http_methods(["POST"])
+def api_attack_building(request, building_id):
+    """Attack a nearby building for PvP raiding.
+    Rules:
+    - Must be within interaction range (~30m).
+    - Owner cannot attack own building.
+    - Reduces HP; if HP reaches 0, building is destroyed and any uncollected revenue is stolen.
+    - Creates a BuildingAttack record and broadcasts a building_event.
+    """
+    try:
+        character = Character.objects.get(user=request.user)
+        data = {}
+        try:
+            data = json.loads(request.body or '{}')
+        except Exception:
+            data = {}
+        damage = int(data.get('damage', 0) or 0)
+        if damage <= 0:
+            # Simple damage model from character stats
+            damage = max(10, int(character.strength) + int(character.level) // 2)
+        # Find building
+        try:
+            building = PlayerBuilding.objects.select_for_update().get(id=building_id)
+        except PlayerBuilding.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'building_not_found'}, status=404)
+        # Prevent attacking own building
+        if building.owner_id == character.id:
+            return JsonResponse({'success': False, 'error': 'own_building_forbidden'}, status=403)
+        # Range check (~30m)
+        try:
+            from .services.movement import ensure_interaction_range
+            ensure_interaction_range(character, building.lat, building.lon)
+        except Exception:
+            # fallback precise distance check
+            dist = character.distance_to(building.lat, building.lon)
+            if dist > 30.0:
+                return JsonResponse({'success': False, 'error': 'too_far'}, status=400)
+        # Apply damage
+        before = int(building.current_hp)
+        after = max(0, before - max(1, int(damage)))
+        building.current_hp = after
+        building.last_attacked = timezone.now()
+        if after <= 0:
+            building.status = 'destroyed'
+        elif building.status == 'active':
+            building.status = 'damaged'
+        building.save(update_fields=['current_hp', 'last_attacked', 'status', 'updated_at'])
+        # Determine gold stolen if destroyed
+        gold_stolen = 0
+        if building.status == 'destroyed':
+            # Steal uncollected revenue
+            try:
+                gold_stolen = max(0, int(building.uncollected_revenue or 0))
+            except Exception:
+                gold_stolen = 0
+            building.uncollected_revenue = 0
+            building.save(update_fields=['uncollected_revenue', 'updated_at'])
+            # Give to attacker
+            character.gold += gold_stolen
+            character.save(update_fields=['gold'])
+        # Record attack
+        atk = BuildingAttack.objects.create(
+            attacker=character,
+            target_building=building,
+            status='success' if building.status in ['damaged', 'destroyed'] else 'active',
+            damage_dealt=(before - after),
+            gold_stolen=gold_stolen,
+            attack_power=int(damage),
+            completed_at=timezone.now()
+        )
+        # Broadcast event
+        extra = {'damage': before - after, 'gold_stolen': gold_stolen}
+        _broadcast_building_event(building, 'under_attack' if building.status != 'destroyed' else 'destroyed', extra=extra)
+        return JsonResponse({
+            'success': True,
+            'damage': before - after,
+            'hp_after': after,
+            'status': building.status,
+            'gold_stolen': gold_stolen,
+            'attacker_gold': character.gold,
+            'attack_id': str(atk.id),
+        })
+    except Character.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'character_not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': 'server_error', 'message': str(e)}, status=500)
+
+
+@login_required
+@csrf_exempt
+@require_http_methods(["POST"])
 def api_collect_revenue(request, building_id):
     """Collect revenue from a building"""
     try:
@@ -356,6 +514,11 @@ def api_collect_revenue(request, building_id):
         # Collect revenue
         revenue_collected = building.collect_revenue()
         
+        # Broadcast collection event
+        try:
+            _broadcast_building_event(building, 'revenue_collected', extra={'amount': revenue_collected})
+        except Exception:
+            pass
         return JsonResponse({
             'success': True,
             'revenue_collected': revenue_collected,

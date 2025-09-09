@@ -416,6 +416,22 @@ class RPGGameConsumer(AsyncWebsocketConsumer):
         except Exception:
             pass
 
+    async def flag_event(self, event):
+        """Forward flag events (created/updated/under_attack/captured/etc.) to the client."""
+        try:
+            payload = event.get('payload') or {}
+            await self.send(text_data=json.dumps({'type': 'flag_event', **payload}))
+        except Exception:
+            pass
+
+    async def building_event(self, event):
+        """Forward building events (placed, under_attack, destroyed, repaired, revenue_collected) to the client."""
+        try:
+            payload = event.get('payload') or {}
+            await self.send(text_data=json.dumps({'type': 'building_event', **payload}))
+        except Exception:
+            pass
+
     # Database helper methods
     @database_sync_to_async
     def get_character(self, user):
