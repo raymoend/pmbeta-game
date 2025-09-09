@@ -373,9 +373,6 @@ def api_nearby_buildings(request):
         }, status=500)
 
 
-@login_required
-@csrf_exempt
-@require_http_methods(["POST"])
 def _broadcast_building_event(building, event: str, extra=None, radius_m: float = 800):
     try:
         from .utils.geo import tiles_within_radius
