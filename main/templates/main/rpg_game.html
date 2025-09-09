@@ -649,6 +649,71 @@
             z-index: 3000;
         }
         
+        /* New UI: Bottom navigation + Drawer */
+        .newui-bottom-nav {
+            position: fixed;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 74px; /* keep above existing action bar */
+            width: min(96vw, 640px);
+            background: rgba(17,24,39,0.92);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 8px 6px;
+            z-index: 11000;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+        }
+        .newui-bottom-nav button {
+            background: none;
+            border: none;
+            color: #e5e7eb;
+            font-size: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .newui-bottom-nav button:hover { background: rgba(255,255,255,0.06); }
+        .newui-bottom-nav .icon { font-size: 18px; }
+        
+        .newui-drawer {
+            position: fixed;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: calc(74px + 10px);
+            width: min(96vw, 680px);
+            height: 56vh;
+            background: rgba(17,24,39,0.96);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 14px;
+            z-index: 11000;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .newui-drawer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            background: rgba(31,41,55,0.95);
+            color: #e5e7eb;
+            font-weight: 700;
+        }
+        .newui-drawer-body {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 10px;
+        }
+        
         .loading-spinner {
             width: 50px;
             height: 50px;
@@ -1110,6 +1175,25 @@
                 <button class="btn btn-primary" title="Use berries (H)" onclick="healWithBerries()">🍓 Berries</button>
                 <button class="btn btn-warn" title="Fight nearest (F)" onclick="fightNearest()">⚔️ Fight</button>
                 <button class="btn btn-ghost" title="Inventory (I)" onclick="showTab('inventory')">🎒 Inventory</button>
+            </div>
+
+            <!-- New UI: Bottom navigation -->
+            <div class="newui-bottom-nav" id="newUIBottomNav">
+                <button onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
+                <button onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
+                <button onclick="openDrawerTab('nearby-tab')"><span class="icon">🧍</span><span>Players</span></button>
+                <button onclick="openDrawerTab('log-tab')"><span class="icon">📜</span><span>Log</span></button>
+                <button onclick="openDrawerTab('flags-tab')"><span class="icon">🚩</span><span>Flags</span></button>
+                <button onclick="openDrawerTab('resources-tab')"><span class="icon">⛏️</span><span>Resources</span></button>
+            </div>
+
+            <!-- New UI: Drawer container -->
+            <div class="newui-drawer" id="newUIDrawer" aria-label="Panel">
+                <div class="newui-drawer-header">
+                    <span id="newUIDrawerTitle">Panel</span>
+                    <button class="btn" style="background:#374151;color:#fff;" onclick="closeDrawer()">Close</button>
+                </div>
+                <div class="newui-drawer-body" id="newUIDrawerBody"></div>
             </div>
         </div>
     </div>
@@ -3743,6 +3827,43 @@ let berriesInterval = null;
             }
         }
 
+        // New UI: Drawer logic
+        let __originalPanelParent = null;
+        function openDrawerTab(tabId) {
+            try {
+                const drawer = document.getElementById('newUIDrawer');
+                const body = document.getElementById('newUIDrawerBody');
+                const title = document.getElementById('newUIDrawerTitle');
+                const panel = document.getElementById(tabId);
+                if (!drawer || !body || !panel) return;
+                if (!__originalPanelParent) {
+                    __originalPanelParent = document.querySelector('#sidePanel .panel-content');
+                }
+                title.textContent = (panel.querySelector('h3')?.textContent) || panel.id.replace('-tab','');
+                // Ensure panel is visible and moved into the drawer
+                body.innerHTML = '';
+                body.appendChild(panel);
+                panel.classList.add('active');
+                panel.style.display = 'block';
+                drawer.style.display = 'flex';
+            } catch (e) { console.warn('openDrawerTab failed', e); }
+        }
+        function closeDrawer() {
+            try {
+                const drawer = document.getElementById('newUIDrawer');
+                const body = document.getElementById('newUIDrawerBody');
+                if (drawer && body && __originalPanelParent) {
+                    // Move any tab panels back to original parent
+                    const children = Array.from(body.children);
+                    children.forEach(ch => {
+                        try { __originalPanelParent.appendChild(ch); ch.classList.remove('active'); ch.style.display = ''; } catch(_) {}
+                    });
+                    body.innerHTML = '';
+                    drawer.style.display = 'none';
+                }
+            } catch (e) { console.warn('closeDrawer failed', e); }
+        }
+
         function showMessage(text, type = 'info') {
             const messageArea = document.getElementById('messageArea');
             const box = document.createElement('div');
@@ -4408,6 +4529,8 @@ function addPlayerMarker() {
         // Initialize everything when page loads
 window.addEventListener('load', function() {
             initializeMap();
+            // New UI: hide legacy side panel by default; rely on drawer
+            try { const sp = document.getElementById('sidePanel'); if (sp) sp.style.display = 'none'; } catch(_) {}
             // Default panel collapsed on desktop; restore preference if stored
             try {
                 const panel = document.getElementById('sidePanel');
