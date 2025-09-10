@@ -301,7 +301,7 @@
         .inventory-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
+            gap: 6px;
             margin-bottom: 20px;
         }
         
@@ -381,9 +381,9 @@
         
         .nearby-player {
             background: rgba(0,0,0,0.2);
-            padding: 12px;
+            padding: 10px;
             border-radius: 8px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -689,7 +689,8 @@
             bottom: calc(14px + 10px);
             width: min(96vw, 680px);
             height: 44vh;
-            background: rgba(17,24,39,0.96);
+            background: rgba(17,24,39,0.75);
+            backdrop-filter: blur(10px);
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 14px;
             z-index: 11000;
@@ -741,9 +742,12 @@
             z-index: 11000;
             box-shadow: 0 8px 20px rgba(0,0,0,0.35);
         }
-        .newui-top-nav button { background:none; border:none; color:#e5e7eb; font-size:14px; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 8px; border-radius:8px; cursor:pointer; }
-        .newui-top-nav button:hover { background: rgba(255,255,255,0.06); }
+        .newui-top-nav button { background:none; border:none; color:#e5e7eb; font-size:14px; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 8px; border-radius:8px; cursor:pointer; position:relative; }
+        .newui-top-nav button:hover { background: rgba(255,255,255,0.08); }
+        .newui-top-nav button.active { background: rgba(37,99,235,0.18); box-shadow: inset 0 0 0 1px rgba(59,130,246,0.35); }
         .newui-top-nav .icon { font-size:18px; }
+        .badge { position:absolute; top:2px; right:6px; background:#ef4444; color:#fff; font-size:10px; font-weight:700; min-width:16px; line-height:16px; text-align:center; border-radius:8px; padding:0 4px; }
+        .dot { position:absolute; top:4px; right:8px; width:8px; height:8px; background:#10b981; border-radius:50%; box-shadow:0 0 0 2px rgba(17,24,39,0.9); display:none; }
         
         /* Chat preview strip */
         .chat-preview-strip {
@@ -1097,13 +1101,13 @@
         <!-- Main Game Area -->
         <!-- New UI Top Navigation -->
         <div class="newui-top-nav" id="newUITopNav">
-            <button onclick="openQuickActions()"><span class="icon">⚡</span><span>Quick</span></button>
-            <button onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
-            <button onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
-            <button onclick="openDrawerTab('nearby-tab')"><span class="icon">🧍</span><span>Players</span></button>
-            <button onclick="openBlackMarketDrawer()"><span class="icon">🛒</span><span>Market</span></button>
-            <button onclick="openChatDrawer()"><span class="icon">💬</span><span>Chat</span></button>
-            <button onclick="openInboxDrawer()"><span class="icon">🔔</span><span>Inbox</span></button>
+            <button id="topBtnQuick" onclick="openQuickActions()"><span class="icon">⚡</span><span>Quick</span></button>
+            <button id="topBtnInventory" onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
+            <button id="topBtnCharacter" onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
+            <button id="topBtnPlayers" onclick="openDrawerTab('nearby-tab')"><span class="icon">🧍</span><span>Players</span></button>
+            <button id="topBtnMarket" onclick="openBlackMarketDrawer()"><span class="icon">🛒</span><span>Market</span></button>
+            <button id="topBtnChat" onclick="openChatDrawer()"><span class="icon">💬</span><span>Chat</span><span id="topChatDot" class="dot"></span></button>
+            <button id="topBtnInbox" onclick="openInboxDrawer()"><span class="icon">🔔</span><span>Inbox</span><span id="topInboxBadge" class="badge" style="display:none;">0</span></button>
         </div>
         <div class="chat-preview-strip" id="chatPreviewStrip"></div>
         
@@ -3892,6 +3896,27 @@ let berriesInterval = null;
         }
 
         // New UI: Drawer logic
+        function setTopNavActive(key) {
+            try {
+                const ids = {
+                    quick: 'topBtnQuick', inventory: 'topBtnInventory', character: 'topBtnCharacter',
+                    players: 'topBtnPlayers', market: 'topBtnMarket', chat: 'topBtnChat', inbox: 'topBtnInbox'
+                };
+                Object.values(ids).forEach(id => { const b = document.getElementById(id); if (b) b.classList.remove('active'); });
+                const activeId = ids[key];
+                if (activeId) { const el = document.getElementById(activeId); if (el) el.classList.add('active'); }
+                gameState.activeDrawer = key || null;
+            } catch(_) {}
+        }
+        function updateTopNavBadges() {
+            try {
+                const inbox = Math.max(0, Number(gameState.unreadNotifications||0));
+                const badge = document.getElementById('topInboxBadge');
+                if (badge) { if (inbox > 0) { badge.style.display = 'inline-block'; badge.textContent = inbox > 99 ? '99+' : String(inbox); } else { badge.style.display = 'none'; badge.textContent='0'; } }
+                const chatDot = document.getElementById('topChatDot');
+                if (chatDot) { chatDot.style.display = (Number(gameState.chatUnreadCount||0) > 0 && gameState.activeDrawer !== 'chat') ? 'block' : 'none'; }
+            } catch(_) {}
+        }
         function openQuickActions() {
             const html = `
                 <div style=\"display:flex; gap:10px; flex-wrap:wrap;\">
@@ -3900,6 +3925,7 @@ let berriesInterval = null;
                     <button class=\"btn\" style=\"flex:1;background:#e74c3c;color:#fff;\" onclick=\"fightNearest()\">⚔️ Fight Nearest</button>
                 </div>`;
             openDrawerHTML('Quick Actions', html);
+            setTopNavActive('quick');
         }
 
         // New UI: Drawer logic
@@ -3913,7 +3939,7 @@ let berriesInterval = null;
                 t.textContent = title || 'Panel';
                 body.innerHTML = html || '';
                 drawer.style.display = 'flex';
-                requestAnimationFrame(()=> drawer.classList.add('open'));
+                requestAnimationFrame(()=> { drawer.classList.add('open'); updateTopNavBadges(); });
             } catch (e) { console.warn('openDrawerHTML failed', e); }
         }
         function openDrawerTab(tabId) {
@@ -3923,6 +3949,9 @@ let berriesInterval = null;
                 const title = document.getElementById('newUIDrawerTitle');
                 const panel = document.getElementById(tabId);
                 if (!drawer || !body || !panel) return;
+                // Map tabId to top key for highlighting
+                const map = { 'inventory-tab':'inventory', 'character-tab':'character', 'nearby-tab':'players', 'flags-tab':'players', 'resources-tab':'players', 'log-tab':'players' };
+                setTopNavActive(map[tabId] || null);
                 if (!__originalPanelParent) {
                     __originalPanelParent = document.querySelector('#sidePanel .panel-content');
                 }
@@ -3935,6 +3964,7 @@ let berriesInterval = null;
                 drawer.style.display = 'flex';
                 requestAnimationFrame(()=> drawer.classList.add('open'));
             } catch (e) { console.warn('openDrawerTab failed', e); }
+            updateTopNavBadges();
         }
         function closeDrawer() {
             try {
@@ -4064,6 +4094,10 @@ let berriesInterval = null;
                 try {
                     if (!Array.isArray(gameState.chatFeed)) gameState.chatFeed = [];
                     gameState.chatFeed.push({ who: who, ch: ch, msg: msg, t: t });
+                    if (gameState.activeDrawer !== 'chat') {
+                        gameState.chatUnreadCount = Math.max(0, Number(gameState.chatUnreadCount||0)) + 1;
+                    }
+                    updateTopNavBadges();
                     if (gameState.chatFeed.length > 10) gameState.chatFeed.shift();
                     updateChatPreviewStrip();
                 } catch(_) {}
@@ -4141,6 +4175,8 @@ let berriesInterval = null;
                     )).join('') + '</div>'
                 ) : '<div style="color:#9ca3af; padding:12px;">No notifications yet</div>';
                 openDrawerHTML('Notifications', html);
+                setTopNavActive('inbox');
+                updateTopNavBadges();
             } catch (_) { openDrawerHTML('Notifications', '<div style="color:#9ca3af; padding:12px;">Failed to load notifications</div>'); }
         }
         async function markNotificationRead(id) {
@@ -4657,6 +4693,7 @@ window.addEventListener('load', function() {
                 }
             } catch(_) {}
             try { initChatUI(); } catch(_) {}
+            try { updateTopNavBadges(); } catch(_) {}
             try { updateHealButtonState(); } catch (_) {}
             try { renderCombatLog(); } catch(_) {}
             checkMobile();
@@ -4726,6 +4763,7 @@ window.addEventListener('load', function() {
                     </div>
                   </div>`;
                 openDrawerHTML('Black Market', html);
+                setTopNavActive('market');
                 // Wire actions after content injected
                 setTimeout(() => {
                   try {
@@ -4766,6 +4804,8 @@ window.addEventListener('load', function() {
                     </div>
                   </div>`;
                 openDrawerHTML('Chat', html);
+                setTopNavActive('chat');
+                gameState.chatUnreadCount = 0; updateTopNavBadges();
                 setTimeout(() => {
                   try {
                     const input = document.getElementById('drawerChatInput');
