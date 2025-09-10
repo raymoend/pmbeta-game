@@ -654,8 +654,8 @@
             position: fixed;
             left: 50%;
             transform: translateX(-50%);
-            bottom: 74px; /* keep above existing action bar */
-            width: min(96vw, 640px);
+            bottom: 14px;
+            width: min(96vw, 680px);
             background: rgba(17,24,39,0.92);
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 12px;
@@ -685,10 +685,10 @@
         .newui-drawer {
             position: fixed;
             left: 50%;
-            transform: translateX(-50%);
-            bottom: calc(74px + 10px);
+            transform: translate(-50%, 16px);
+            bottom: calc(14px + 10px);
             width: min(96vw, 680px);
-            height: 56vh;
+            height: 44vh;
             background: rgba(17,24,39,0.96);
             border: 1px solid rgba(255,255,255,0.12);
             border-radius: 14px;
@@ -697,6 +697,17 @@
             display: none;
             flex-direction: column;
             overflow: hidden;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.22s ease, transform 0.24s ease;
+        }
+        .newui-drawer.open {
+            opacity: 1;
+            transform: translate(-50%, 0);
+            pointer-events: auto;
+        }
+        @media (max-width: 768px) {
+            .newui-drawer { height: 65vh; bottom: calc(14px + 10px); }
         }
         .newui-drawer-header {
             display: flex;
@@ -1030,7 +1041,7 @@
                 <div class="level-display">Level {{ character.level }}</div>
                 <div class="gold-display">{{ character.gold|floatformat:0 }}g</div>
                 <div id="jumpCooldown" style="background: rgba(0,0,0,0.2); color:#e5e7eb; padding:6px 10px; border-radius:14px; font-size:0.85rem; min-width:64px; text-align:center;"></div>
-                <button class="settings-btn" id="inboxBtn" onclick="toggleInbox()" title="Notifications" style="position:relative;">
+                <button class="settings-btn" id="inboxBtn" onclick="openInboxDrawer()" title="Notifications" style="position:relative;">
                     🔔
                 </button>
                 <span id="inboxBadge"></span>
@@ -1170,21 +1181,18 @@
                 </div>
             </div>
             <!-- Floating Action Bar -->
-            <div class="action-bar" id="actionBar">
-                <button class="btn btn-success" title="Heal nearby (E)" onclick="claimEnvironmentalHeal()">🌿 Heal</button>
-                <button class="btn btn-primary" title="Use berries (H)" onclick="healWithBerries()">🍓 Berries</button>
-                <button class="btn btn-warn" title="Fight nearest (F)" onclick="fightNearest()">⚔️ Fight</button>
-                <button class="btn btn-ghost" title="Inventory (I)" onclick="showTab('inventory')">🎒 Inventory</button>
-            </div>
+            <!-- Legacy action bar removed in favor of Quick Actions in bottom nav -->
+            <div id="actionBar" style="display:none;"></div>
 
             <!-- New UI: Bottom navigation -->
             <div class="newui-bottom-nav" id="newUIBottomNav">
+                <button onclick="openQuickActions()"><span class="icon">⚡</span><span>Quick</span></button>
                 <button onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
                 <button onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
                 <button onclick="openDrawerTab('nearby-tab')"><span class="icon">🧍</span><span>Players</span></button>
                 <button onclick="openDrawerTab('log-tab')"><span class="icon">📜</span><span>Log</span></button>
                 <button onclick="openDrawerTab('flags-tab')"><span class="icon">🚩</span><span>Flags</span></button>
-                <button onclick="openDrawerTab('resources-tab')"><span class="icon">⛏️</span><span>Resources</span></button>
+                <button onclick="openInboxDrawer()"><span class="icon">🔔</span><span>Inbox</span></button>
             </div>
 
             <!-- New UI: Drawer container -->
@@ -3828,6 +3836,17 @@ let berriesInterval = null;
         }
 
         // New UI: Drawer logic
+        function openQuickActions() {
+            const html = `
+                <div style=\"display:flex; gap:10px; flex-wrap:wrap;\">
+                    <button class=\"btn\" style=\"flex:1;background:#16a34a;color:#fff;\" onclick=\"claimEnvironmentalHeal()\">🌿 Heal Nearby</button>
+                    <button class=\"btn\" style=\"flex:1;background:#22c55e;color:#fff;\" onclick=\"healWithBerries()\">🍓 Use Berries</button>
+                    <button class=\"btn\" style=\"flex:1;background:#e74c3c;color:#fff;\" onclick=\"fightNearest()\">⚔️ Fight Nearest</button>
+                </div>`;
+            openDrawerHTML('Quick Actions', html);
+        }
+
+        // New UI: Drawer logic
         let __originalPanelParent = null;
         function openDrawerHTML(title, html) {
             try {
@@ -3838,6 +3857,7 @@ let berriesInterval = null;
                 t.textContent = title || 'Panel';
                 body.innerHTML = html || '';
                 drawer.style.display = 'flex';
+                requestAnimationFrame(()=> drawer.classList.add('open'));
             } catch (e) { console.warn('openDrawerHTML failed', e); }
         }
         function openDrawerTab(tabId) {
@@ -3857,20 +3877,25 @@ let berriesInterval = null;
                 panel.classList.add('active');
                 panel.style.display = 'block';
                 drawer.style.display = 'flex';
+                requestAnimationFrame(()=> drawer.classList.add('open'));
             } catch (e) { console.warn('openDrawerTab failed', e); }
         }
         function closeDrawer() {
             try {
                 const drawer = document.getElementById('newUIDrawer');
                 const body = document.getElementById('newUIDrawerBody');
-                if (drawer && body && __originalPanelParent) {
+                if (drawer) {
+                    drawer.classList.remove('open');
+                    const done = () => { drawer.style.display = 'none'; drawer.removeEventListener('transitionend', done); };
+                    drawer.addEventListener('transitionend', done);
+                }
+                if (body && __originalPanelParent) {
                     // Move any tab panels back to original parent
                     const children = Array.from(body.children);
                     children.forEach(ch => {
                         try { __originalPanelParent.appendChild(ch); ch.classList.remove('active'); ch.style.display = ''; } catch(_) {}
                     });
                     body.innerHTML = '';
-                    drawer.style.display = 'none';
                 }
             } catch (e) { console.warn('closeDrawer failed', e); }
         }
@@ -4029,17 +4054,24 @@ let berriesInterval = null;
                 if (unreadEl) unreadEl.textContent = String(n);
             } catch(_) {}
         }
-        function toggleInbox(force) {
-            const panel = document.getElementById('inboxPanel');
-            if (!panel) return;
-            if (typeof force === 'boolean') {
-                panel.style.display = force ? 'block' : 'none';
-            } else {
-                panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
-            }
-            if (panel.style.display === 'block') { refreshInbox(); }
-        }
+        function toggleInbox(force) { openInboxDrawer(); }
         async function refreshInbox() { await fetchNotifications(1, 20); }
+        async function openInboxDrawer() {
+            try {
+                await fetchNotifications(1, 20);
+                const items = Array.isArray(gameState.notifications) ? gameState.notifications : [];
+                const html = items.length ? (
+                    '<div>' + items.map(ev => (
+                        '<div class="inbox-item" style="padding:8px 6px; border-bottom:1px dashed rgba(255,255,255,0.08);">'
+                        + '<div style="font-weight:700;">' + String(ev.title||'').replace(/</g,'&lt;') + '</div>'
+                        + '<div style="font-size:0.85rem;color:#9ca3af;">' + (ev.created_at ? new Date(ev.created_at).toLocaleString() : '') + '</div>'
+                        + '<div style="margin-top:4px;">' + String(ev.message||'').replace(/</g,'&lt;') + '</div>'
+                        + '</div>'
+                    )).join('') + '</div>'
+                ) : '<div style="color:#9ca3af; padding:12px;">No notifications yet</div>';
+                openDrawerHTML('Notifications', html);
+            } catch (_) { openDrawerHTML('Notifications', '<div style="color:#9ca3af; padding:12px;">Failed to load notifications</div>'); }
+        }
         async function markNotificationRead(id) {
             try {
                 const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
@@ -4577,10 +4609,10 @@ window.addEventListener('load', function() {
         // Settings Modal Functions
         function openSettingsModal() {
             const html = `
-                <div style="display:flex;flex-direction:column;gap:10px;">
-                    <button class="btn" onclick="openRelocateDrawer()" style="background:#3498db;color:#fff;">📍 Relocate GPS</button>
-                    <button class="btn" onclick="resetMapClient()" style="background:#6b7280;color:#fff;">🧹 Clear map (client)</button>
-                    <button class="btn" onclick="logout()" style="background:#e74c3c;color:#fff;">🚪 Logout</button>
+                <div style=\"display:flex;flex-direction:column;gap:10px;\">
+                    <button class=\"btn\" onclick=\"openRelocateDrawer()\" style=\"background:#3498db;color:#fff;\">📍 Relocate GPS</button>
+                    <button class=\"btn\" onclick=\"resetMapClient()\" style=\"background:#6b7280;color:#fff;\">🧹 Clear map (client)</button>
+                    <button class=\"btn\" onclick=\"logout()\" style=\"background:#e74c3c;color:#fff;\">🚪 Logout</button>
                 </div>`;
             openDrawerHTML('Settings', html);
         }
