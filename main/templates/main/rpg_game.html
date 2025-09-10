@@ -724,6 +724,49 @@
             overflow: auto;
             padding: 10px;
         }
+        /* New UI: Top navigation under HUD */
+        .newui-top-nav {
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(96vw, 900px);
+            background: rgba(17,24,39,0.92);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 6px 6px;
+            z-index: 11000;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+        }
+        .newui-top-nav button { background:none; border:none; color:#e5e7eb; font-size:14px; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 8px; border-radius:8px; cursor:pointer; }
+        .newui-top-nav button:hover { background: rgba(255,255,255,0.06); }
+        .newui-top-nav .icon { font-size:18px; }
+        
+        /* Chat preview strip */
+        .chat-preview-strip {
+            position: fixed;
+            top: 110px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(96vw, 900px);
+            background: rgba(17,24,39,0.85);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            z-index: 11000;
+            color: #e5e7eb;
+            font-size: 12px;
+            padding: 4px 8px;
+            display: flex;
+            gap: 12px;
+            overflow: hidden;
+        }
+        .chat-preview-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; opacity: 0.9; }
+        
+        /* Hide floating Black Market button in new UI */
+        #blackMarketBtn { display: none !important; }
         
         .loading-spinner {
             width: 50px;
@@ -1052,6 +1095,18 @@
         </div>
 
         <!-- Main Game Area -->
+        <!-- New UI Top Navigation -->
+        <div class="newui-top-nav" id="newUITopNav">
+            <button onclick="openQuickActions()"><span class="icon">⚡</span><span>Quick</span></button>
+            <button onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
+            <button onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
+            <button onclick="openDrawerTab('nearby-tab')"><span class="icon">🧍</span><span>Players</span></button>
+            <button onclick="openBlackMarketDrawer()"><span class="icon">🛒</span><span>Market</span></button>
+            <button onclick="openChatDrawer()"><span class="icon">💬</span><span>Chat</span></button>
+            <button onclick="openInboxDrawer()"><span class="icon">🔔</span><span>Inbox</span></button>
+        </div>
+        <div class="chat-preview-strip" id="chatPreviewStrip"></div>
+        
         <div class="game-main">
             <!-- Mapbox Map -->
             <div id="map"></div>
@@ -1185,7 +1240,7 @@
             <div id="actionBar" style="display:none;"></div>
 
             <!-- New UI: Bottom navigation -->
-            <div class="newui-bottom-nav" id="newUIBottomNav">
+            <div class="newui-bottom-nav" id="newUIBottomNav" style="display:none;">
                 <button onclick="openQuickActions()"><span class="icon">⚡</span><span>Quick</span></button>
                 <button onclick="openDrawerTab('inventory-tab')"><span class="icon">🎒</span><span>Inventory</span></button>
                 <button onclick="openDrawerTab('character-tab')"><span class="icon">👤</span><span>Character</span></button>
@@ -1391,7 +1446,8 @@
             hpTickerEl: null,
             combatLog: [],
             notifications: [],
-            unreadNotifications: 0
+            unreadNotifications: 0,
+            chatFeed: []
         };
         const CURRENT_USER_ID = {{ request.user.id|default:'null' }};
         // Style fallback guard to recover from invalid style IDs in production
@@ -3994,16 +4050,31 @@ let berriesInterval = null;
         function addChatMessage(p) {
             try {
                 const body = document.getElementById('chatMessages');
-                if (!body) return;
                 const who = (p.character_name || 'Unknown').toString().replace(/</g,'&lt;');
                 const ch = (p.channel || p.chat_type || 'global');
                 const msg = (p.message || '').toString().replace(/</g,'&lt;');
                 const t = (p.timestamp || '').toString();
-                const row = document.createElement('div');
-                row.className = 'chat-msg';
-                row.innerHTML = `<span class="chat-meta">[${ch}] ${who}</span> ${msg}`;
-                body.appendChild(row);
-                body.scrollTop = body.scrollHeight;
+                if (body) {
+                    const row = document.createElement('div');
+                    row.className = 'chat-msg';
+                    row.innerHTML = `<span class="chat-meta">[${ch}] ${who}</span> ${msg}`;
+                    body.appendChild(row);
+                    body.scrollTop = body.scrollHeight;
+                }
+                try {
+                    if (!Array.isArray(gameState.chatFeed)) gameState.chatFeed = [];
+                    gameState.chatFeed.push({ who: who, ch: ch, msg: msg, t: t });
+                    if (gameState.chatFeed.length > 10) gameState.chatFeed.shift();
+                    updateChatPreviewStrip();
+                } catch(_) {}
+            } catch(_) {}
+        }
+        function updateChatPreviewStrip() {
+            try {
+                const el = document.getElementById('chatPreviewStrip');
+                if (!el) return;
+                const feed = Array.isArray(gameState.chatFeed) ? gameState.chatFeed.slice(-2) : [];
+                el.innerHTML = feed.map(it => `<div class="chat-preview-item">[${it.ch}] <strong>${it.who}</strong>: ${it.msg}</div>`).join('');
             } catch(_) {}
         }
 
@@ -4620,6 +4691,102 @@ window.addEventListener('load', function() {
         function closeSettingsModal() {
             const modal = document.getElementById('settingsModal');
             modal.style.display = 'none';
+        }
+        
+        async function openBlackMarketDrawer() {
+            try {
+                const res = await fetch('/api/rpg/vendor/black-market/catalog/', { credentials: 'same-origin' });
+                const data = await res.json().catch(()=>({success:false}));
+                if (!res.ok || data.success === false) { openDrawerHTML('Black Market', '<div style="padding:12px; color:#fca5a5;">Vendor unavailable</div>'); return; }
+                const buys = Array.isArray(data.buys) ? data.buys : [];
+                const sells = Array.isArray(data.sells) ? data.sells : [];
+                const html = `
+                  <div style=\"display:flex;gap:12px;\">
+                    <div style=\"flex:1;min-width:0;\">
+                      <div style=\"font-weight:600;margin-bottom:6px;\">We Buy</div>
+                      ${buys.map(b => `
+                        <div style=\"display:flex;justify-content:space-between;align-items:center;margin:4px 0;gap:8px;\">
+                          <span>${(b.name||'').toString().replace(/</g,'&lt;')}</span>
+                          <div>
+                            <input type=\"number\" value=\"1\" min=\"1\" style=\"width:60px;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:2px 6px;\"/>
+                            <button class=\"bm-sell\" data-name=\"${b.name}\" data-price=\"${b.price_per_unit}\" style=\"margin-left:6px;background:#10b981;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;\">Sell @ ${b.price_per_unit}g</button>
+                          </div>
+                        </div>`).join('')}
+                    </div>
+                    <div style=\"flex:1;min-width:0;\">
+                      <div style=\"font-weight:600;margin-bottom:6px;\">We Sell</div>
+                      ${sells.map(s => `
+                        <div style=\"display:flex;justify-content:space-between;align-items:center;margin:4px 0;gap:8px;\">
+                          <span>${(s.name||'').toString().replace(/</g,'&lt;')}</span>
+                          <div>
+                            <input type=\"number\" value=\"1\" min=\"1\" style=\"width:60px;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:2px 6px;\"/>
+                            <button class=\"bm-buy\" data-name=\"${s.name}\" data-price=\"${s.price_per_unit}\" style=\"margin-left:6px;background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;\">Buy @ ${s.price_per_unit}g</button>
+                          </div>
+                        </div>`).join('')}
+                    </div>
+                  </div>`;
+                openDrawerHTML('Black Market', html);
+                // Wire actions after content injected
+                setTimeout(() => {
+                  try {
+                    const body = document.getElementById('newUIDrawerBody');
+                    body.querySelectorAll('.bm-sell').forEach(btn => {
+                      btn.addEventListener('click', async (e) => {
+                        const wrap = e.target.closest('div');
+                        const qtyInput = wrap.querySelector('input');
+                        const qty = Math.max(1, parseInt(qtyInput.value||'1',10));
+                        await actBlackMarket('sell', btn.getAttribute('data-name'), qty);
+                      });
+                    });
+                    body.querySelectorAll('.bm-buy').forEach(btn => {
+                      btn.addEventListener('click', async (e) => {
+                        const wrap = e.target.closest('div');
+                        const qtyInput = wrap.querySelector('input');
+                        const qty = Math.max(1, parseInt(qtyInput.value||'1',10));
+                        await actBlackMarket('buy', btn.getAttribute('data-name'), qty);
+                      });
+                    });
+                  } catch(_) {}
+                }, 0);
+              } catch (e) {
+                openDrawerHTML('Black Market', '<div style="padding:12px; color:#fca5a5;">Failed to load</div>');
+              }
+        }
+        
+        function openChatDrawer() {
+            try {
+                const feed = Array.isArray(gameState.chatFeed) ? gameState.chatFeed : [];
+                const html = `
+                  <div style=\"display:flex;flex-direction:column;height:100%;\">
+                    <div id=\"drawerChatMessages\" style=\"flex:1; overflow:auto; padding:4px;\">${feed.map(it => `<div class=\\"chat-msg\\"><span class=\\"chat-meta\\">[${it.ch}] ${it.who}</span> ${it.msg}</div>`).join('')}</div>
+                    <div style=\"display:flex; gap:6px; padding:6px; border-top:1px solid rgba(255,255,255,0.08);\">
+                      <select id=\"drawerChatChannel\" style=\"background:#374151;color:#e5e7eb;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px;\"><option value=\"local\">Local</option><option value=\"global\">Global</option></select>
+                      <input id=\"drawerChatInput\" type=\"text\" placeholder=\"Type a message...\" maxlength=\"200\" style=\"flex:1;background:#111827;color:#e5e7eb;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:6px;\"/>
+                      <button id=\"drawerChatSend\" class=\"btn\" style=\"background:#2563eb;color:#fff;\">Send</button>
+                    </div>
+                  </div>`;
+                openDrawerHTML('Chat', html);
+                setTimeout(() => {
+                  try {
+                    const input = document.getElementById('drawerChatInput');
+                    const sel = document.getElementById('drawerChatChannel');
+                    const send = document.getElementById('drawerChatSend');
+                    const sendFn = () => {
+                      const txt = (input && input.value) ? input.value.trim() : '';
+                      const ch = (sel && sel.value) || 'local';
+                      if (!txt) return;
+                      if (gameState.websocket && gameState.websocket.readyState === WebSocket.OPEN) {
+                        gameState.websocket.send(JSON.stringify({ type: 'chat_message', message: txt, chat_type: ch }));
+                        input.value = '';
+                      } else {
+                        showMessage('Chat disconnected. Reconnecting...', 'error');
+                      }
+                    };
+                    send.addEventListener('click', sendFn);
+                    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendFn(); }});
+                  } catch(_) {}
+                }, 0);
+              } catch (e) { openDrawerHTML('Chat', '<div style="padding:12px; color:#fca5a5;">Failed to open chat</div>'); }
         }
         
         function openRelocateDrawer() {
